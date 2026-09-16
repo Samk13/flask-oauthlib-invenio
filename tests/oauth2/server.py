@@ -134,7 +134,7 @@ def cache_provider(app):
     bind_sqlalchemy(oauth, db.session, user=User,
                     token=Token, client=Client)
 
-    app.config.update({'OAUTH2_CACHE_TYPE': 'simple'})
+    app.config.update({'OAUTH2_CACHE_TYPE': 'SimpleCache'})
     bind_cache_grant(app, oauth, current_user)
     return oauth
 

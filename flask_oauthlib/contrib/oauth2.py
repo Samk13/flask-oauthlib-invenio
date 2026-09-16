@@ -76,14 +76,14 @@ def bind_cache_grant(app, provider, current_user, config_prefix='OAUTH2'):
     A usage example::
 
         oauth = OAuth2Provider(app)
-        app.config.update({'OAUTH2_CACHE_TYPE': 'redis'})
+        app.config.update({'OAUTH2_CACHE_TYPE': 'RedisCache'})
 
         bind_cache_grant(app, oauth, current_user)
 
     You can define which cache system you would like to use by setting the
     following configuration option::
 
-        OAUTH2_CACHE_TYPE = 'null' // memcache, simple, redis, filesystem
+        OAUTH2_CACHE_TYPE = 'NullCache' // MemcachedCache, SimpleCache, RedisCache, FileSystemCache
 
     For more information on the supported cache systems please visit:
     `Cache <http://werkzeug.pocoo.org/docs/contrib/cache/>`_

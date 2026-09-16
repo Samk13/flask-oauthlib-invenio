@@ -102,7 +102,7 @@ token using Memcache, Redis, or some other caching system.
 An example::
 
     oauth = OAuth2Provider(app)
-    app.config.update({'OAUTH2_CACHE_TYPE': 'redis'})
+    app.config.update({'OAUTH2_CACHE_TYPE': 'RedisCache'})
 
     bind_cache_grant(app, oauth, current_user)
 
