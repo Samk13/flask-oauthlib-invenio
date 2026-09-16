@@ -4,15 +4,24 @@ from cachelib import FileSystemCache, MemcachedCache, NullCache, RedisCache, Sim
 
 
 class Cache(object):
+    CACHE_TYPE_ALIASES = {
+        "NullCache": "null",
+        "SimpleCache": "simple",
+        "FileSystemCache": "filesystem",
+        "RedisCache": "redis",
+        "MemcachedCache": "memcache",
+    }
+
     def __init__(self, app, config_prefix="OAUTHLIB", **kwargs):
         self.config_prefix = config_prefix
         self.config = app.config
 
-        cache_type = "_%s" % self._config("type")
+        cache_type = self._config("type")
+        cache_type = "_%s" % self.CACHE_TYPE_ALIASES.get(cache_type, cache_type)
         kwargs.update(dict(default_timeout=self._config("DEFAULT_TIMEOUT", 100)))
 
         try:
-            self.cache = getattr(self, cache_type)(**kwargs)
+            self.cache = object.__getattribute__(self, cache_type)(**kwargs)
         except AttributeError:
             raise RuntimeError("`%s` is not a valid cache type!" % cache_type)
         app.extensions[config_prefix.lower() + "_cache"] = self.cache
@@ -22,7 +31,7 @@ class Cache(object):
             return object.__getattribute__(self, key)
         except AttributeError:
             try:
-                return getattr(self.cache, key)
+                return getattr(object.__getattribute__(self, "cache"), key)
             except AttributeError:
                 raise AttributeError("No such attribute: %s" % key)
 
@@ -61,6 +70,8 @@ class Cache(object):
             )
         )
         return MemcachedCache(**kwargs)
+
+    _memcached = _memcache
 
     def _redis(self, **kwargs):
         """Returns a :class:`RedisCache` instance"""
