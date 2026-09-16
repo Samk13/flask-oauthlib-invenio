@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  schedule:
+    - cron: "0 3 * * 6"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason"
+        required: false
+        default: "Manual trigger"
+
+permissions:
+  contents: read
+
+jobs:
+  Tests:
+    uses: inveniosoftware/workflows/.github/workflows/tests-python.yml@master
+    with:
+      python-version: '["3.9", "3.11", "3.12"]'
+      extras: tests
+      db-service: '[""]'
+      search-service: '[""]'
