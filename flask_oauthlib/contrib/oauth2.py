@@ -1,22 +1,22 @@
 # coding: utf-8
 """
-    flask_oauthlib.contrib.oauth2
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+flask_oauthlib.contrib.oauth2
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    SQLAlchemy and Grant-Caching for OAuth2 provider.
+SQLAlchemy and Grant-Caching for OAuth2 provider.
 
-    contributed by: Randy Topliffe
+contributed by: Randy Topliffe
 """
 
 import logging
 from datetime import datetime, timedelta, timezone
+
 from .cache import Cache
 
+__all__ = ("bind_cache_grant", "bind_sqlalchemy")
 
-__all__ = ('bind_cache_grant', 'bind_sqlalchemy')
 
-
-log = logging.getLogger('flask_oauthlib')
+log = logging.getLogger("flask_oauthlib")
 
 
 class Grant(object):
@@ -31,8 +31,15 @@ class Grant(object):
     :param user: the authorizatopm user
     """
 
-    def __init__(self, cache=None, client_id=None, code=None,
-                 redirect_uri=None, scopes=None, user=None):
+    def __init__(
+        self,
+        cache=None,
+        client_id=None,
+        code=None,
+        redirect_uri=None,
+        scopes=None,
+        user=None,
+    ):
         self._cache = cache
         self.client_id = client_id
         self.code = code
@@ -45,25 +52,23 @@ class Grant(object):
 
         Note: This is required by the oauthlib
         """
-        log.debug(
-            "Deleting grant %s for client %s" % (self.code, self.client_id)
-        )
+        log.debug("Deleting grant %s for client %s" % (self.code, self.client_id))
         self._cache.delete(self.key)
         return None
 
     @property
     def key(self):
         """The string used as the key for the cache"""
-        return '%s%s' % (self.code, self.client_id)
+        return "%s%s" % (self.code, self.client_id)
 
     def __getitem__(self, item):
         return getattr(self, item)
 
     def keys(self):
-        return ['client_id', 'code', 'redirect_uri', 'scopes', 'user']
+        return ["client_id", "code", "redirect_uri", "scopes", "user"]
 
 
-def bind_cache_grant(app, provider, current_user, config_prefix='OAUTH2'):
+def bind_cache_grant(app, provider, current_user, config_prefix="OAUTH2"):
     """Configures an :class:`OAuth2Provider` instance to use various caching
     systems to get and set the grant token. This removes the need to
     register :func:`grantgetter` and :func:`grantsetter` yourself.
@@ -96,7 +101,7 @@ def bind_cache_grant(app, provider, current_user, config_prefix='OAUTH2'):
         grant = Grant(
             cache,
             client_id=client_id,
-            code=code['code'],
+            code=code["code"],
             redirect_uri=request.redirect_uri,
             scopes=request.scopes,
             user=current_user(),
@@ -118,8 +123,9 @@ def bind_cache_grant(app, provider, current_user, config_prefix='OAUTH2'):
         return grant
 
 
-def bind_sqlalchemy(provider, session, user=None, client=None,
-                    token=None, grant=None, current_user=None):
+def bind_sqlalchemy(
+    provider, session, user=None, client=None, token=None, grant=None, current_user=None
+):
     """Configures the given :class:`OAuth2Provider` instance with the
     required getters and setters for persistence with SQLAlchemy.
 
@@ -181,8 +187,7 @@ def bind_sqlalchemy(provider, session, user=None, client=None,
 
     if grant:
         if not current_user:
-            raise ValueError(('`current_user` is required'
-                              'for Grant Binding'))
+            raise ValueError(("`current_user` is required" "for Grant Binding"))
         grant_binding = GrantBinding(grant, session, current_user)
         provider.grantgetter(grant_binding.get)
         provider.grantsetter(grant_binding.set)
@@ -202,7 +207,7 @@ class BaseBinding(object):
     @property
     def query(self):
         """Determines which method of getting the query object for use"""
-        if hasattr(self.model, 'query'):
+        if hasattr(self.model, "query"):
             return self.model.query
         else:
             return self.session.query(self.model)
@@ -240,6 +245,7 @@ class TokenBinding(BaseBinding):
     """Object use by SQLAlchemyBinding to register the token
     getter and setter
     """
+
     def __init__(self, model, session, current_user=None):
         self.current_user = current_user
         super(TokenBinding, self).__init__(model, session)
@@ -263,7 +269,7 @@ class TokenBinding(BaseBinding):
         :param token: token object
         :param request: OAuthlib request object
         """
-        if hasattr(request, 'user') and request.user:
+        if hasattr(request, "user") and request.user:
             user = request.user
         elif self.current_user:
             # for implicit token
@@ -271,15 +277,13 @@ class TokenBinding(BaseBinding):
 
         client = request.client
 
-        tokens = self.query.filter_by(
-            client_id=client.client_id,
-            user_id=user.id).all()
+        tokens = self.query.filter_by(client_id=client.client_id, user_id=user.id).all()
         if tokens:
             for tk in tokens:
                 self.session.delete(tk)
             self.session.commit()
 
-        expires_in = token.get('expires_in')
+        expires_in = token.get("expires_in")
         expires = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
         tok = self.model(**token)
@@ -311,11 +315,11 @@ class GrantBinding(BaseBinding):
         expires = datetime.now(timezone.utc) + timedelta(seconds=100)
         grant = self.model(
             client_id=request.client.client_id,
-            code=code['code'],
+            code=code["code"],
             redirect_uri=request.redirect_uri,
-            scope=' '.join(request.scopes),
+            scope=" ".join(request.scopes),
             user=self.current_user(),
-            expires=expires
+            expires=expires,
         )
         self.session.add(grant)
 

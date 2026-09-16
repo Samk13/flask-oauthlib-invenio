@@ -3,7 +3,9 @@ import os
 import sys
 import tempfile
 import unittest
+
 from flask_oauthlib.client import prepare_request
+
 try:
     from urlparse import urlparse
 except ImportError:
@@ -18,7 +20,7 @@ else:
 
 # os.environ['DEBUG'] = 'true'
 # for oauthlib 0.6.3
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = 'true'
+os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "true"
 
 
 class BaseSuite(unittest.TestCase):
@@ -27,11 +29,11 @@ class BaseSuite(unittest.TestCase):
 
         self.db_fd, self.db_file = tempfile.mkstemp()
         config = {
-            'OAUTH1_PROVIDER_ENFORCE_SSL': False,
-            'OAUTH1_PROVIDER_KEY_LENGTH': (3, 30),
-            'OAUTH1_PROVIDER_REALMS': ['email', 'address'],
-            'SQLALCHEMY_DATABASE_URI': 'sqlite:///%s' % self.db_file,
-            'SQLALCHEMY_TRACK_MODIFICATIONS': False
+            "OAUTH1_PROVIDER_ENFORCE_SSL": False,
+            "OAUTH1_PROVIDER_KEY_LENGTH": (3, 30),
+            "OAUTH1_PROVIDER_REALMS": ["email", "address"],
+            "SQLALCHEMY_DATABASE_URI": "sqlite:///%s" % self.db_file,
+            "SQLALCHEMY_TRACK_MODIFICATIONS": False,
         }
         app.config.update(config)
 
@@ -62,16 +64,12 @@ class BaseSuite(unittest.TestCase):
         test_client = app.test_client()
 
         def make_request(uri, headers=None, data=None, method=None):
-            uri, headers, data, method = prepare_request(
-                uri, headers, data, method
-            )
+            uri, headers, data, method = prepare_request(uri, headers, data, method)
 
             # test client is a `werkzeug.test.Client`
             parsed = urlparse(uri)
-            uri = '%s?%s' % (parsed.path, parsed.query)
-            resp = test_client.open(
-                uri, headers=headers, data=data, method=method
-            )
+            uri = "%s?%s" % (parsed.path, parsed.query)
+            resp = test_client.open(uri, headers=headers, data=data, method=method)
             # for compatible
             resp.code = resp.status_code
             return resp, resp.data
@@ -81,13 +79,13 @@ class BaseSuite(unittest.TestCase):
 
 def to_unicode(text):
     if not isinstance(text, string_type):
-        text = text.decode('utf-8')
+        text = text.decode("utf-8")
     return text
 
 
 def to_bytes(text):
     if isinstance(text, string_type):
-        text = text.encode('utf-8')
+        text = text.encode("utf-8")
     return text
 
 
@@ -98,4 +96,4 @@ def to_base64(text):
 def clean_url(location):
     location = to_unicode(location)
     ret = urlparse(location)
-    return '%s?%s' % (ret.path, ret.query)
+    return "%s?%s" % (ret.path, ret.query)

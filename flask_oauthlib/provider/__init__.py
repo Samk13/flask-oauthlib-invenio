@@ -1,11 +1,11 @@
 # coding: utf-8
 """
-    flask_oauthlib.provider
-    ~~~~~~~~~~~~~~~~~~~~~~~
+flask_oauthlib.provider
+~~~~~~~~~~~~~~~~~~~~~~~
 
-    Implemnts OAuth1 and OAuth2 providers support for Flask.
+Implemnts OAuth1 and OAuth2 providers support for Flask.
 
-    :copyright: (c) 2013 - 2014 by Hsiaoming Yang.
+:copyright: (c) 2013 - 2014 by Hsiaoming Yang.
 """
 
 # flake8: noqa

@@ -1,4 +1,4 @@
-__all__ = ['OAuthException', 'AccessTokenNotFound']
+__all__ = ["OAuthException", "AccessTokenNotFound"]
 
 
 class OAuthException(Exception):
