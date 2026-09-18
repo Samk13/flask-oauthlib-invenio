@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import g, jsonify, make_response, render_template, request
 from flask_sqlalchemy import SQLAlchemy
+from invenio_cache import InvenioCache
 from sqlalchemy.orm import relationship
 
 from flask_oauthlib.contrib.oauth2 import bind_cache_grant, bind_sqlalchemy
@@ -53,6 +54,41 @@ class Client(db.Model):
     def allowed_grant_types(self):
         return ["authorization_code", "password", "client_credentials", "refresh_token"]
 
+    @property
+    def allowed_response_types(self):
+        return ["code", "token"]
+
+    def get_client_id(self):
+        return self.client_id
+
+    def get_default_redirect_uri(self):
+        return self.default_redirect_uri
+
+    def get_allowed_scope(self, scope):
+        if not scope:
+            return " ".join(self.default_scopes)
+        requested = set(scope.split())
+        return scope if set(self.default_scopes).issuperset(requested) else None
+
+    def check_redirect_uri(self, redirect_uri):
+        return redirect_uri in self.redirect_uris
+
+    def check_client_secret(self, client_secret):
+        return self.client_secret == client_secret
+
+    def check_endpoint_auth_method(self, method, endpoint):
+        if endpoint != "token":
+            return True
+        if self.client_type == "public":
+            return method in {"none", "client_secret_post", "client_secret_basic"}
+        return method in {"client_secret_basic", "client_secret_post"}
+
+    def check_response_type(self, response_type):
+        return response_type in self.allowed_response_types
+
+    def check_grant_type(self, grant_type):
+        return grant_type in self.allowed_grant_types
+
 
 class Grant(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -81,6 +117,12 @@ class Grant(db.Model):
         if self.scope:
             return self.scope.split()
         return None
+
+    def get_redirect_uri(self):
+        return self.redirect_uri
+
+    def get_scope(self):
+        return self.scope or ""
 
 
 class Token(db.Model):
@@ -118,6 +160,29 @@ class Token(db.Model):
         db.session.commit()
         return self
 
+    def check_client(self, client):
+        return self.client_id == client.client_id
+
+    def get_scope(self):
+        return self.scope or ""
+
+    def is_expired(self):
+        if self.expires is None:
+            return False
+        expires = self.expires
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) > expires
+
+    def is_revoked(self):
+        return False
+
+    def get_user(self):
+        return self.user
+
+    def get_client(self):
+        return self.client
+
 
 def current_user():
     return g.user
@@ -128,7 +193,8 @@ def cache_provider(app):
 
     bind_sqlalchemy(oauth, db.session, user=User, token=Token, client=Client)
 
-    app.config.update({"OAUTH2_CACHE_TYPE": "simple"})
+    app.config.update({"CACHE_TYPE": "SimpleCache"})
+    InvenioCache(app)
     bind_cache_grant(app, oauth, current_user)
     return oauth
 
@@ -204,53 +270,54 @@ def default_provider(app):
 def prepare_app(app):
     db.init_app(app)
     db.app = app
-    db.create_all()
+    with app.app_context():
+        db.create_all()
 
-    client1 = Client(
-        name="dev",
-        client_id="dev",
-        client_secret="dev",
-        _redirect_uris=(
-            "http://localhost:8000/authorized " "http://localhost/authorized"
-        ),
-    )
+        client1 = Client(
+            name="dev",
+            client_id="dev",
+            client_secret="dev",
+            _redirect_uris=(
+                "http://localhost:8000/authorized " "http://localhost/authorized"
+            ),
+        )
 
-    client2 = Client(
-        name="confidential",
-        client_id="confidential",
-        client_secret="confidential",
-        client_type="confidential",
-        _redirect_uris=(
-            "http://localhost:8000/authorized " "http://localhost/authorized"
-        ),
-    )
+        client2 = Client(
+            name="confidential",
+            client_id="confidential",
+            client_secret="confidential",
+            client_type="confidential",
+            _redirect_uris=(
+                "http://localhost:8000/authorized " "http://localhost/authorized"
+            ),
+        )
 
-    user = User(username="admin")
+        user = User(username="admin")
 
-    temp_grant = Grant(
-        user_id=1,
-        client_id="confidential",
-        code="12345",
-        scope="email",
-        expires=datetime.now(timezone.utc) + timedelta(seconds=100),
-    )
+        temp_grant = Grant(
+            user_id=1,
+            client_id="confidential",
+            code="12345",
+            scope="email",
+            expires=datetime.now(timezone.utc) + timedelta(seconds=100),
+        )
 
-    access_token = Token(
-        user_id=1, client_id="dev", access_token="expired", expires_in=0
-    )
+        access_token = Token(
+            user_id=1, client_id="dev", access_token="expired", expires_in=0
+        )
 
-    access_token2 = Token(user_id=1, client_id="dev", access_token="never_expire")
+        access_token2 = Token(user_id=1, client_id="dev", access_token="never_expire")
 
-    try:
-        db.session.add(client1)
-        db.session.add(client2)
-        db.session.add(user)
-        db.session.add(temp_grant)
-        db.session.add(access_token)
-        db.session.add(access_token2)
-        db.session.commit()
-    except:
-        db.session.rollback()
+        try:
+            db.session.add(client1)
+            db.session.add(client2)
+            db.session.add(user)
+            db.session.add(temp_grant)
+            db.session.add(access_token)
+            db.session.add(access_token2)
+            db.session.commit()
+        except:
+            db.session.rollback()
     return app
 
 

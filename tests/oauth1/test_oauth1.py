@@ -1,10 +1,9 @@
 # coding: utf-8
 
-import time
-
+import pytest
+from authlib.oauth1 import ClientAuth
 from flask import Flask
 from mock import MagicMock
-from nose.tools import raises
 
 from flask_oauthlib.client import OAuth, OAuthException
 
@@ -91,29 +90,31 @@ class TestWebAuth(OAuthSuite):
         assert "error" in rv.location
 
 
-auth_header = (
-    'OAuth realm="%(realm)s",'
-    'oauth_nonce="97392753692390970531372987366",'
-    'oauth_timestamp="%(timestamp)d", oauth_version="1.0",'
-    'oauth_signature_method="%(signature_method)s",'
-    'oauth_consumer_key="%(key)s",'
-    'oauth_callback="%(callback)s",'
-    'oauth_signature="%(signature)s"'
-)
-auth_dict = {
-    "realm": "email",
-    "timestamp": int(time.time()),
-    "key": "dev",
-    "signature_method": "HMAC-SHA1",
-    "callback": "http%3A%2F%2Flocalhost%2Fauthorized",
-    "signature": "LngsvwVPnd8vCZ2hr7umJvqb%2Fyw%3D",
-}
+def auth_headers(
+    realm="email", callback="http://localhost/authorized", signature_method="HMAC-SHA1"
+):
+    auth = ClientAuth(
+        "dev",
+        client_secret="dev",
+        redirect_uri=callback,
+        signature_method="HMAC-SHA1",
+        realm=realm,
+    )
+    _, headers, _ = auth.prepare(
+        "GET", "http://localhost/oauth/request_token", {}, None
+    )
+    if signature_method != "HMAC-SHA1":
+        headers["Authorization"] = headers["Authorization"].replace(
+            'oauth_signature_method="HMAC-SHA1"',
+            'oauth_signature_method="%s"' % signature_method,
+        )
+    return {"Authorization": headers["Authorization"]}
 
 
 class TestInvalid(OAuthSuite):
-    @raises(OAuthException)
     def test_request(self):
-        self.client.get("/login")
+        with pytest.raises(OAuthException):
+            self.client.get("/login")
 
     def test_request_token(self):
         rv = self.client.get("/oauth/request_token")
@@ -124,37 +125,28 @@ class TestInvalid(OAuthSuite):
         assert "error" in u(rv.data)
 
     def test_invalid_realms(self):
-        auth_format = auth_dict.copy()
-        auth_format["realm"] = "profile"
-
-        headers = {"Authorization": auth_header % auth_format}
-        rv = self.client.get("/oauth/request_token", headers=headers)
+        rv = self.client.get(
+            "/oauth/request_token", headers=auth_headers(realm="profile")
+        )
         assert "error" in u(rv.data)
         assert "realm" in u(rv.data)
 
     def test_no_realms(self):
-        auth_format = auth_dict.copy()
-        auth_format["realm"] = ""
-
-        headers = {"Authorization": auth_header % auth_format}
-        rv = self.client.get("/oauth/request_token", headers=headers)
+        rv = self.client.get("/oauth/request_token", headers=auth_headers(realm=""))
         assert "secret" in u(rv.data)
 
     def test_no_callback(self):
-        auth_format = auth_dict.copy()
-        auth_format["callback"] = ""
-
-        headers = {"Authorization": auth_header % auth_format}
-        rv = self.client.get("/oauth/request_token", headers=headers)
+        rv = self.client.get(
+            "/oauth/request_token", headers=auth_headers(callback=None)
+        )
         assert "error" in u(rv.data)
         assert "callback" in u(rv.data)
 
     def test_invalid_signature_method(self):
-        auth_format = auth_dict.copy()
-        auth_format["signature_method"] = "PLAIN"
-
-        headers = {"Authorization": auth_header % auth_format}
-        rv = self.client.get("/oauth/request_token", headers=headers)
+        rv = self.client.get(
+            "/oauth/request_token",
+            headers=auth_headers(signature_method="PLAIN"),
+        )
         assert "error" in u(rv.data)
         assert "signature" in u(rv.data)
 

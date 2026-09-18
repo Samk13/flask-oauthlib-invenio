@@ -116,6 +116,8 @@ class Token(db.Model):
 def prepare_app(app):
     db.init_app(app)
     db.app = app
+    ctx = app.app_context()
+    ctx.push()
     db.create_all()
 
     client1 = Client(
@@ -135,6 +137,8 @@ def prepare_app(app):
         db.session.commit()
     except:
         db.session.rollback()
+    finally:
+        ctx.pop()
     return app
 
 

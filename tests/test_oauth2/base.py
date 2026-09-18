@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Flask, g, jsonify, make_response, render_template, request
 from flask_sqlalchemy import SQLAlchemy
+from invenio_cache import InvenioCache
 from sqlalchemy.orm import relationship
 
 from flask_oauthlib.contrib.oauth2 import bind_cache_grant, bind_sqlalchemy
@@ -67,6 +68,41 @@ class Client(db.Model):
             types.remove(self.disallow_grant_type)
         return types
 
+    @property
+    def allowed_response_types(self):
+        return ["code", "token"]
+
+    def get_client_id(self):
+        return self.client_id
+
+    def get_default_redirect_uri(self):
+        return self.default_redirect_uri
+
+    def get_allowed_scope(self, scope):
+        if not scope:
+            return " ".join(self.default_scopes)
+        requested = set(scope.split())
+        return scope if set(self.default_scopes).issuperset(requested) else None
+
+    def check_redirect_uri(self, redirect_uri):
+        return redirect_uri in self.redirect_uris
+
+    def check_client_secret(self, client_secret):
+        return self.client_secret == client_secret
+
+    def check_endpoint_auth_method(self, method, endpoint):
+        if endpoint != "token":
+            return True
+        if not self.is_confidential:
+            return method in {"none", "client_secret_basic", "client_secret_post"}
+        return method in {"client_secret_basic", "client_secret_post"}
+
+    def check_response_type(self, response_type):
+        return response_type in self.allowed_response_types
+
+    def check_grant_type(self, grant_type):
+        return grant_type in self.allowed_grant_types
+
 
 class Grant(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -95,6 +131,12 @@ class Grant(db.Model):
         if self.scope:
             return self.scope.split()
         return None
+
+    def get_redirect_uri(self):
+        return self.redirect_uri
+
+    def get_scope(self):
+        return self.scope or ""
 
 
 class Token(db.Model):
@@ -130,6 +172,29 @@ class Token(db.Model):
         db.session.commit()
         return self
 
+    def check_client(self, client):
+        return self.client_id == client.client_id
+
+    def get_scope(self):
+        return self.scope or ""
+
+    def is_expired(self):
+        if self.expires is None:
+            return False
+        expires = self.expires
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) > expires
+
+    def is_revoked(self):
+        return False
+
+    def get_user(self):
+        return self.user
+
+    def get_client(self):
+        return self.client
+
 
 def current_user():
     return g.user
@@ -147,7 +212,8 @@ def cache_provider(app):
         current_user=current_user,
     )
 
-    app.config.update({"OAUTH2_CACHE_TYPE": "simple"})
+    app.config.update({"CACHE_TYPE": "SimpleCache"})
+    InvenioCache(app)
     bind_cache_grant(app, oauth, current_user)
     return oauth
 

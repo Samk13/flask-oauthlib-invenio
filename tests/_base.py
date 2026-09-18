@@ -40,13 +40,17 @@ class BaseSuite(unittest.TestCase):
         self.setup_app(app)
 
         self.app = app
+        self._ctx = app.app_context()
+        self._ctx.push()
         self.client = app.test_client()
         return app
 
     def tearDown(self):
-        self.database.session.remove()
-        self.database.drop_all()
+        with self.app.app_context():
+            self.database.session.remove()
+            self.database.drop_all()
 
+        self._ctx.pop()
         os.close(self.db_fd)
         os.unlink(self.db_file)
 
