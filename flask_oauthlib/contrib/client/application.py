@@ -14,10 +14,9 @@ try:
 except ImportError:
     from urlparse import urljoin
 
+from authlib.integrations.base_client import OAuthError
+from authlib.integrations.requests_client import OAuth1Session, OAuth2Session
 from flask import current_app, redirect, request
-from oauthlib.oauth2.rfc6749.errors import MissingCodeError
-from requests_oauthlib import OAuth1Session, OAuth2Session
-from requests_oauthlib.oauth1_session import TokenMissing
 from werkzeug.utils import import_string
 
 from .descriptor import OAuthProperty, WebSessionData
@@ -195,7 +194,7 @@ class OAuth1Application(BaseApplication):
         # obtains verifier
         try:
             oauth.parse_authorization_response(request.url)
-        except TokenMissing:
+        except OAuthError:
             return  # authorization denied
 
         # obtains access token
@@ -271,7 +270,7 @@ class OAuth2Application(BaseApplication):
                     client_secret=self.client_secret,
                     authorization_response=request.url,
                 )
-            except MissingCodeError:
+            except OAuthError:
                 return
 
         return OAuth2Response(token)
@@ -301,7 +300,8 @@ class OAuth2Application(BaseApplication):
         if compliance_fixes is not None:
             if compliance_fixes.startswith("."):
                 compliance_fixes = (
-                    "requests_oauthlib.compliance_fixes" + compliance_fixes
+                    "authlib.integrations.requests_client.compliance_fixes"
+                    + compliance_fixes
                 )
             apply_fixes = import_string(compliance_fixes)
             oauth = apply_fixes(oauth)

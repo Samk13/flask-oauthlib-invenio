@@ -31,7 +31,8 @@ Contributed by: tonyseek
 
 import copy
 
-from oauthlib.common import unicode_type
+unicode_type = str
+
 
 __all__ = [
     "douban",
