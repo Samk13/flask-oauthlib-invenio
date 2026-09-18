@@ -1,5 +1,5 @@
+import pytest
 from flask import Flask
-from nose.tools import raises
 
 from flask_oauthlib.client import (
     OAuth,
@@ -78,18 +78,18 @@ def test_parse_xml():
     parse_response(resp, resp.read())
 
 
-@raises(AttributeError)
 def test_raise_app():
     app = Flask(__name__)
     oauth = OAuth(app)
     client = app.extensions["oauthlib.client"]
-    assert client.demo.name == "dev"
+    with pytest.raises(AttributeError):
+        client.demo
 
 
 class TestOAuthRemoteApp(object):
-    @raises(TypeError)
     def test_raise_init(self):
-        OAuthRemoteApp("oauth", "twitter")
+        with pytest.raises(TypeError):
+            OAuthRemoteApp("oauth", "twitter")
 
     def test_not_raise_init(self):
         OAuthRemoteApp("oauth", "twitter", app_key="foo")
@@ -204,3 +204,52 @@ class TestOAuthRemoteApp(object):
         dict_token = {"access_token": "access token"}
         client = remote.make_client(token=dict_token)
         assert client.token == client_token
+
+    def test_custom_remote_app_hooks_are_preserved(self):
+        class CustomRemoteApp(OAuthRemoteApp):
+            calls = []
+
+            def expand_url(self, url):
+                self.calls.append(("expand_url", url))
+                return "http://example.org/custom/" + url
+
+            def pre_request(self, uri, headers, data):
+                self.calls.append(("pre_request", uri))
+                headers["X-Custom-Provider"] = "yes"
+                return uri, headers, data
+
+            def http_request(self, uri, headers=None, data=None, method=None):
+                self.calls.append(("http_request", uri, headers, method))
+                return (
+                    Response(
+                        b'{"ok": true}',
+                        headers={
+                            "status-code": 200,
+                            "content-type": "application/json",
+                        },
+                    ),
+                    b'{"ok": true}',
+                )
+
+        oauth = OAuth()
+        remote = CustomRemoteApp(
+            oauth,
+            "custom",
+            consumer_key="custom-key",
+            consumer_secret="custom-secret",
+            request_token_url=None,
+            base_url="http://example.org/",
+            access_token_url="http://example.org/token",
+            authorize_url="http://example.org/authorize",
+        )
+
+        @remote.tokengetter
+        def get_token():
+            return "token"
+
+        response = remote.get("profile")
+        assert response.status == 200
+        assert response.data["ok"] is True
+        assert ("expand_url", "profile") in remote.calls
+        assert remote.calls[-1][0] == "http_request"
+        assert remote.calls[-1][2]["X-Custom-Provider"] == "yes"
