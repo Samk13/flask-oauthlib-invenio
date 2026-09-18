@@ -11,8 +11,6 @@ contributed by: Randy Topliffe
 import logging
 from datetime import datetime, timedelta, timezone
 
-from .cache import Cache
-
 __all__ = ("bind_cache_grant", "bind_sqlalchemy")
 
 
@@ -46,12 +44,10 @@ class Grant(object):
         self.redirect_uri = redirect_uri
         self.scopes = scopes
         self.user = user
+        self._key = None
 
     def delete(self):
-        """Removes itself from the cache
-
-        Note: This is required by the oauthlib
-        """
+        """Removes itself from the cache."""
         log.debug("Deleting grant %s for client %s" % (self.code, self.client_id))
         self._cache.delete(self.key)
         return None
@@ -59,7 +55,11 @@ class Grant(object):
     @property
     def key(self):
         """The string used as the key for the cache"""
-        return "%s%s" % (self.code, self.client_id)
+        return self._key or "%s%s" % (self.code, self.client_id)
+
+    @key.setter
+    def key(self, value):
+        self._key = value
 
     def __getitem__(self, item):
         return getattr(self, item)
@@ -67,37 +67,63 @@ class Grant(object):
     def keys(self):
         return ["client_id", "code", "redirect_uri", "scopes", "user"]
 
+    def get_redirect_uri(self):
+        """Return redirect URI for Authlib authorization-code grants."""
+        return self.redirect_uri
+
+    def get_scope(self):
+        """Return scope string for Authlib authorization-code grants."""
+        if isinstance(self.scopes, (list, tuple, set)):
+            return " ".join(self.scopes)
+        return self.scopes or ""
+
 
 def bind_cache_grant(app, provider, current_user, config_prefix="OAUTH2"):
-    """Configures an :class:`OAuth2Provider` instance to use various caching
-    systems to get and set the grant token. This removes the need to
-    register :func:`grantgetter` and :func:`grantsetter` yourself.
+    """Bind authorization-code grants to Invenio-Cache.
 
-    :param app: Flask application instance
-    :param provider: :class:`OAuth2Provider` instance
-    :param current_user: function that returns an :class:`User` object
-    :param config_prefix: prefix for config
-
-    A usage example::
-
-        oauth = OAuth2Provider(app)
-        app.config.update({'OAUTH2_CACHE_TYPE': 'redis'})
-
-        bind_cache_grant(app, oauth, current_user)
-
-    You can define which cache system you would like to use by setting the
-    following configuration option::
-
-        OAUTH2_CACHE_TYPE = 'null' // memcache, simple, redis, filesystem
-
-    For more information on the supported cache systems please visit:
-    `Cache <http://werkzeug.pocoo.org/docs/contrib/cache/>`_
+    This keeps the historical ``bind_cache_grant`` API, but the storage
+    backend is now the application's ``invenio_cache.current_cache``
+    (Flask-Caching) instead of the deprecated per-OAuth ``OAUTH2_CACHE_*``
+    Cachelib configuration. ``config_prefix`` is accepted for backward
+    compatibility and intentionally ignored.
     """
-    cache = Cache(app, config_prefix)
+    try:
+        cache = app.extensions["invenio-cache"].cache
+    except KeyError as exc:
+        raise RuntimeError(
+            "bind_cache_grant requires InvenioCache to be initialized on the "
+            "Flask application. Configure CACHE_TYPE/CACHE_REDIS_URL via "
+            "invenio-cache instead of legacy OAUTH2_CACHE_* settings."
+        ) from exc
+
+    key_prefix = app.config.get("OAUTH2_GRANT_CACHE_KEY_PREFIX", "oauth2::grant::")
+    timeout = app.config.get("OAUTH2_GRANT_CACHE_EXPIRES", 100)
+
+    def _key(client_id, code):
+        return "%s%s::%s" % (key_prefix, client_id, code)
+
+    def _consume(key):
+        """Atomically consume a key when Redis supports GETDEL.
+
+        Flask-Caching exposes the concrete backend as ``cache.cache``. Redis
+        backends serialize values before storage, so direct GETDEL results must
+        be passed through the backend serializer. Non-Redis backends fall back
+        to get/delete, which is sufficient for development/test backends such as
+        SimpleCache but is not atomic.
+        """
+        backend = getattr(cache, "cache", None)
+        client = getattr(backend, "_write_client", None)
+        if client is not None and hasattr(client, "getdel"):
+            raw = client.getdel("%s%s" % (backend._get_prefix(), key))
+            return backend.serializer.loads(raw)
+        value = cache.get(key)
+        if value is not None:
+            cache.delete(key)
+        return value
 
     @provider.grantsetter
     def create_grant(client_id, code, request, *args, **kwargs):
-        """Sets the grant token with the configured cache system"""
+        """Set the grant token with the configured Invenio cache."""
         grant = Grant(
             cache,
             client_id=client_id,
@@ -106,14 +132,16 @@ def bind_cache_grant(app, provider, current_user, config_prefix="OAUTH2"):
             scopes=request.scopes,
             user=current_user(),
         )
+        grant.key = _key(client_id, grant.code)
         log.debug("Set Grant Token with key %s" % grant.key)
-        cache.set(grant.key, dict(grant))
+        cache.set(grant.key, dict(grant), timeout=timeout)
 
     @provider.grantgetter
     def get(client_id, code):
-        """Gets the grant token with the configured cache system"""
+        """Get the grant token from the configured Invenio cache."""
         grant = Grant(cache, client_id=client_id, code=code)
-        ret = cache.get(grant.key)
+        grant.key = _key(client_id, code)
+        ret = _consume(grant.key)
         if not ret:
             log.debug("Grant Token not found with key %s" % grant.key)
             return None
