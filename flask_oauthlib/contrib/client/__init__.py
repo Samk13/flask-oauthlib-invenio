@@ -5,8 +5,7 @@ from werkzeug.local import LocalProxy
 
 from .application import OAuth1Application, OAuth2Application
 
-
-__all__ = ['OAuth', 'OAuth1Application', 'OAuth2Application']
+__all__ = ["OAuth", "OAuth1Application", "OAuth2Application"]
 
 
 class OAuth(object):
@@ -20,7 +19,7 @@ class OAuth(object):
         oauth.init_app(app)
     """
 
-    state_key = 'oauthlib.contrib.client'
+    state_key = "oauthlib.contrib.client"
 
     def __init__(self, app=None):
         self.remote_apps = {}
@@ -28,7 +27,7 @@ class OAuth(object):
             self.init_app(app)
 
     def init_app(self, app):
-        app.extensions = getattr(app, 'extensions', {})
+        app.extensions = getattr(app, "extensions", {})
         app.extensions[self.state_key] = OAuthState()
 
     def add_remote_app(self, remote_app, name=None, **kwargs):
@@ -49,7 +48,7 @@ class OAuth(object):
             remote_app = copy.copy(remote_app)
             remote_app.name = name
             vars(remote_app).update(kwargs)
-        if not hasattr(remote_app, 'clients'):
+        if not hasattr(remote_app, "clients"):
             remote_app.clients = cached_clients
         self.remote_apps[name] = remote_app
         return remote_app
@@ -62,16 +61,16 @@ class OAuth(object):
         :param kwargs: the attributes of remote application.
         """
         if version is None:
-            if 'request_token_url' in kwargs:
-                version = '1'
+            if "request_token_url" in kwargs:
+                version = "1"
             else:
-                version = '2'
-        if version == '1':
+                version = "2"
+        if version == "1":
             remote_app = OAuth1Application(name, clients=cached_clients)
-        elif version == '2':
+        elif version == "2":
             remote_app = OAuth2Application(name, clients=cached_clients)
         else:
-            raise ValueError('unkonwn version %r' % version)
+            raise ValueError("unkonwn version %r" % version)
         return self.add_remote_app(remote_app, **kwargs)
 
     def __getitem__(self, name):
@@ -84,7 +83,7 @@ class OAuth(object):
             app = self.remote_apps.get(key)
             if app:
                 return app
-            raise AttributeError('No such app: %s' % key)
+            raise AttributeError("No such app: %s" % key)
 
 
 class OAuthState(object):
@@ -96,7 +95,7 @@ class OAuthState(object):
 def get_cached_clients():
     """Gets the cached clients dictionary in current context."""
     if OAuth.state_key not in current_app.extensions:
-        raise RuntimeError('%r is not initialized.' % current_app)
+        raise RuntimeError("%r is not initialized." % current_app)
     state = current_app.extensions[OAuth.state_key]
     return state.cached_clients
 

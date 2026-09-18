@@ -1,31 +1,31 @@
 """
-    flask_oauthlib.contrib.client
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+flask_oauthlib.contrib.client
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    An experiment client with requests-oauthlib as backend.
+An experiment client with requests-oauthlib as backend.
 """
 
-import os
 import contextlib
+import os
 import warnings
+
 try:
     from urllib.parse import urljoin
 except ImportError:
     from urlparse import urljoin
 
 from flask import current_app, redirect, request
+from oauthlib.oauth2.rfc6749.errors import MissingCodeError
 from requests_oauthlib import OAuth1Session, OAuth2Session
 from requests_oauthlib.oauth1_session import TokenMissing
-from oauthlib.oauth2.rfc6749.errors import MissingCodeError
 from werkzeug.utils import import_string
 
 from .descriptor import OAuthProperty, WebSessionData
-from .structure import OAuth1Response, OAuth2Response
 from .exceptions import AccessTokenNotFound
 from .signals import request_token_fetched
+from .structure import OAuth1Response, OAuth2Response
 
-
-__all__ = ['OAuth1Application', 'OAuth2Application']
+__all__ = ["OAuth1Application", "OAuth2Application"]
 
 
 class BaseApplication(object):
@@ -39,7 +39,7 @@ class BaseApplication(object):
     """
 
     session_class = None
-    endpoint_url = OAuthProperty('endpoint_url', default='')
+    endpoint_url = OAuthProperty("endpoint_url", default="")
 
     def __init__(self, name, clients=None, **kwargs):
         # oauth property required
@@ -51,12 +51,12 @@ class BaseApplication(object):
         # other descriptor assignable attributes
         for k, v in kwargs.items():
             if not hasattr(self.__class__, k):
-                raise TypeError('descriptor %r not found' % k)
+                raise TypeError("descriptor %r not found" % k)
             setattr(self, k, v)
 
     def __repr__(self):
         class_name = self.__class__.__name__
-        return '<%s:%s at %s>' % (class_name, self.name, hex(id(self)))
+        return "<%s:%s at %s>" % (class_name, self.name, hex(id(self)))
 
     def tokengetter(self, fn):
         self._tokengetter = fn
@@ -68,9 +68,9 @@ class BaseApplication(object):
 
         :returns: token or ``None``.
         """
-        tokengetter = getattr(self, '_tokengetter', None)
+        tokengetter = getattr(self, "_tokengetter", None)
         if tokengetter is None:
-            raise RuntimeError('%r missing tokengetter' % self)
+            raise RuntimeError("%r missing tokengetter" % self)
         return tokengetter()
 
     @property
@@ -87,7 +87,7 @@ class BaseApplication(object):
 
     def _make_client_with_token(self, token):
         """Uses cached client or create new one with specific token."""
-        cached_clients = getattr(self, 'clients', None)
+        cached_clients = getattr(self, "clients", None)
         hashed_token = _hash_token(self, token)
 
         if cached_clients and hashed_token in cached_clients:
@@ -127,33 +127,33 @@ class BaseApplication(object):
         return getattr(client, method)(url, *args, **kwargs)
 
     def head(self, *args, **kwargs):
-        return self.request('head', *args, **kwargs)
+        return self.request("head", *args, **kwargs)
 
     def get(self, *args, **kwargs):
-        return self.request('get', *args, **kwargs)
+        return self.request("get", *args, **kwargs)
 
     def post(self, *args, **kwargs):
-        return self.request('post', *args, **kwargs)
+        return self.request("post", *args, **kwargs)
 
     def put(self, *args, **kwargs):
-        return self.request('put', *args, **kwargs)
+        return self.request("put", *args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        return self.request('delete', *args, **kwargs)
+        return self.request("delete", *args, **kwargs)
 
     def patch(self, *args, **kwargs):
-        return self.request('patch', *args, **kwargs)
+        return self.request("patch", *args, **kwargs)
 
 
 class OAuth1Application(BaseApplication):
     """The remote application for OAuth 1.0a."""
 
-    request_token_url = OAuthProperty('request_token_url')
-    access_token_url = OAuthProperty('access_token_url')
-    authorization_url = OAuthProperty('authorization_url')
+    request_token_url = OAuthProperty("request_token_url")
+    access_token_url = OAuthProperty("access_token_url")
+    authorization_url = OAuthProperty("authorization_url")
 
-    consumer_key = OAuthProperty('consumer_key')
-    consumer_secret = OAuthProperty('consumer_secret')
+    consumer_key = OAuthProperty("consumer_key")
+    consumer_secret = OAuthProperty("consumer_secret")
 
     session_class = OAuth1Session
 
@@ -166,13 +166,13 @@ class OAuth1Application(BaseApplication):
                   object.
         """
         if isinstance(token, dict):
-            access_token = token['oauth_token']
-            access_token_secret = token['oauth_token_secret']
+            access_token = token["oauth_token"]
+            access_token_secret = token["oauth_token_secret"]
         else:
             access_token, access_token_secret = token
         return self.make_oauth_session(
-            resource_owner_key=access_token,
-            resource_owner_secret=access_token_secret)
+            resource_owner_key=access_token, resource_owner_secret=access_token_secret
+        )
 
     def authorize(self, callback_uri, code=302):
         # TODO add support for oauth_callback=oob (out-of-band) here
@@ -204,7 +204,8 @@ class OAuth1Application(BaseApplication):
 
     def make_oauth_session(self, **kwargs):
         oauth = self.session_class(
-            self.consumer_key, client_secret=self.consumer_secret, **kwargs)
+            self.consumer_key, client_secret=self.consumer_secret, **kwargs
+        )
         return oauth
 
 
@@ -213,18 +214,18 @@ class OAuth2Application(BaseApplication):
 
     session_class = OAuth2Session
 
-    access_token_url = OAuthProperty('access_token_url')
-    authorization_url = OAuthProperty('authorization_url')
-    refresh_token_url = OAuthProperty('refresh_token_url', default='')
+    access_token_url = OAuthProperty("access_token_url")
+    authorization_url = OAuthProperty("authorization_url")
+    refresh_token_url = OAuthProperty("refresh_token_url", default="")
 
-    client_id = OAuthProperty('client_id')
-    client_secret = OAuthProperty('client_secret')
-    scope = OAuthProperty('scope', default=None)
+    client_id = OAuthProperty("client_id")
+    client_secret = OAuthProperty("client_secret")
+    scope = OAuthProperty("scope", default=None)
 
-    compliance_fixes = OAuthProperty('compliance_fixes', default=None)
+    compliance_fixes = OAuthProperty("compliance_fixes", default=None)
 
-    _session_state = WebSessionData('state')
-    _session_redirect_url = WebSessionData('redir')
+    _session_state = WebSessionData("state")
+    _session_redirect_url = WebSessionData("redir")
 
     def make_client(self, token):
         """Creates a client with specific access token dictionary.
@@ -250,41 +251,47 @@ class OAuth2Application(BaseApplication):
     def authorize(self, callback_uri, code=302, **kwargs):
         oauth = self.make_oauth_session(redirect_uri=callback_uri)
         authorization_url, state = oauth.authorization_url(
-            self.authorization_url, **kwargs)
+            self.authorization_url, **kwargs
+        )
         self._session_state = state
         self._session_redirect_url = callback_uri
         return redirect(authorization_url, code)
 
     def authorized_response(self):
         oauth = self.make_oauth_session(
-            state=self._session_state,
-            redirect_uri=self._session_redirect_url)
+            state=self._session_state, redirect_uri=self._session_redirect_url
+        )
         del self._session_state
         del self._session_redirect_url
 
         with self.insecure_transport():
             try:
                 token = oauth.fetch_token(
-                    self.access_token_url, client_secret=self.client_secret,
-                    authorization_response=request.url)
+                    self.access_token_url,
+                    client_secret=self.client_secret,
+                    authorization_response=request.url,
+                )
             except MissingCodeError:
                 return
 
         return OAuth2Response(token)
 
     def make_oauth_session(self, **kwargs):
-        kwargs.setdefault('scope', self.scope)
+        kwargs.setdefault("scope", self.scope)
 
         # configures automatic token refresh if possible
         if self.refresh_token_url:
-            if not hasattr(self, '_tokensaver'):
-                raise RuntimeError('missing tokensaver')
-            kwargs.setdefault('auto_refresh_url', self.refresh_token_url)
-            kwargs.setdefault('auto_refresh_kwargs', {
-                'client_id': self.client_id,
-                'client_secret': self.client_secret,
-            })
-            kwargs.setdefault('token_updater', self._tokensaver)
+            if not hasattr(self, "_tokensaver"):
+                raise RuntimeError("missing tokensaver")
+            kwargs.setdefault("auto_refresh_url", self.refresh_token_url)
+            kwargs.setdefault(
+                "auto_refresh_kwargs",
+                {
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret,
+                },
+            )
+            kwargs.setdefault("token_updater", self._tokensaver)
 
         # creates session
         oauth = self.session_class(self.client_id, **kwargs)
@@ -292,9 +299,10 @@ class OAuth2Application(BaseApplication):
         # patches session
         compliance_fixes = self.compliance_fixes
         if compliance_fixes is not None:
-            if compliance_fixes.startswith('.'):
-                compliance_fixes = \
-                    'requests_oauthlib.compliance_fixes' + compliance_fixes
+            if compliance_fixes.startswith("."):
+                compliance_fixes = (
+                    "requests_oauthlib.compliance_fixes" + compliance_fixes
+                )
             apply_fixes = import_string(compliance_fixes)
             oauth = apply_fixes(oauth)
 
@@ -305,23 +313,25 @@ class OAuth2Application(BaseApplication):
         """Creates a context to enable the oauthlib environment variable in
         order to debug with insecure transport.
         """
-        origin = os.environ.get('OAUTHLIB_INSECURE_TRANSPORT')
+        origin = os.environ.get("OAUTHLIB_INSECURE_TRANSPORT")
         if current_app.debug or current_app.testing:
             try:
-                os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+                os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
                 yield
             finally:
                 if origin:
-                    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = origin
+                    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = origin
                 else:
-                    os.environ.pop('OAUTHLIB_INSECURE_TRANSPORT', None)
+                    os.environ.pop("OAUTHLIB_INSECURE_TRANSPORT", None)
         else:
             if origin:
                 warnings.warn(
-                    'OAUTHLIB_INSECURE_TRANSPORT has been found in os.environ '
-                    'but the app is not running in debug mode or testing mode.'
-                    ' It may put you in danger of the Man-in-the-middle attack'
-                    ' while using OAuth 2.', RuntimeWarning)
+                    "OAUTHLIB_INSECURE_TRANSPORT has been found in os.environ "
+                    "but the app is not running in debug mode or testing mode."
+                    " It may put you in danger of the Man-in-the-middle attack"
+                    " while using OAuth 2.",
+                    RuntimeWarning,
+                )
             yield
 
 
@@ -334,6 +344,6 @@ def _hash_token(application, token):
     elif isinstance(token, tuple):
         hashed_token = token
     else:
-        raise TypeError('%r is unknown type of token' % token)
+        raise TypeError("%r is unknown type of token" % token)
 
     return (application.__class__.__name__, application.name, hashed_token)

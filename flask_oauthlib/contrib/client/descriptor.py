@@ -1,7 +1,6 @@
 from flask import current_app, session
 
-
-__all__ = ['OAuthProperty', 'WebSessionData']
+__all__ = ["OAuthProperty", "WebSessionData"]
 
 
 class OAuthProperty(object):
@@ -29,14 +28,15 @@ class OAuthProperty(object):
             return instance_namespace[self.name]
 
         # gets from app config (or default value)
-        config_name = '{0}_{1}'.format(instance_ident, self.name).upper()
+        config_name = "{0}_{1}".format(instance_ident, self.name).upper()
         if config_name not in current_app.config:
             if self.default is not self._missing:
                 return self.default
             exception_message = (
-                '{0!r} missing {1} \n\n You need to provide it in arguments'
+                "{0!r} missing {1} \n\n You need to provide it in arguments"
                 ' `{0.__class__.__name__}(..., {1}="foobar", ...)` or in '
-                'app.config `{2}`').format(instance, self.name, config_name)
+                "app.config `{2}`"
+            ).format(instance, self.name, config_name)
             raise RuntimeError(exception_message)
         return current_app.config[config_name]
 
@@ -49,7 +49,7 @@ class OAuthProperty(object):
 class WebSessionData(object):
     """The property which providing accessing of Flask session."""
 
-    key_format = '_oauth_{0}_{1}'
+    key_format = "_oauth_{0}_{1}"
 
     def __init__(self, ident):
         self.ident = ident

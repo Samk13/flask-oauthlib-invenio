@@ -1,14 +1,15 @@
 # coding: utf-8
-from flask import g, render_template, request, jsonify
+from flask import g, jsonify, render_template, request
 from flask_sqlalchemy import SQLAlchemy
-from flask_oauthlib.provider import OAuth1Provider
 
+from flask_oauthlib.provider import OAuth1Provider
 
 db = SQLAlchemy()
 
 
-def enable_log(name='flask_oauthlib'):
+def enable_log(name="flask_oauthlib"):
     import logging
+
     logger = logging.getLogger(name)
     logger.addHandler(logging.StreamHandler())
     logger.setLevel(logging.DEBUG)
@@ -19,16 +20,14 @@ def enable_log(name='flask_oauthlib'):
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(40), unique=True, index=True,
-                         nullable=False)
+    username = db.Column(db.String(40), unique=True, index=True, nullable=False)
 
 
 class Client(db.Model):
     # id = db.Column(db.Integer, primary_key=True)
     # human readable name
     client_key = db.Column(db.String(40), primary_key=True)
-    client_secret = db.Column(db.String(55), unique=True, index=True,
-                              nullable=False)
+    client_secret = db.Column(db.String(55), unique=True, index=True, nullable=False)
     rsa_key = db.Column(db.String(55))
     _realms = db.Column(db.Text)
     _redirect_uris = db.Column(db.Text)
@@ -56,16 +55,15 @@ class Client(db.Model):
 
 class Grant(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(
-        db.Integer, db.ForeignKey('user.id', ondelete='CASCADE')
-    )
-    user = db.relationship('User')
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id", ondelete="CASCADE"))
+    user = db.relationship("User")
 
     client_key = db.Column(
-        db.String(40), db.ForeignKey('client.client_key'),
+        db.String(40),
+        db.ForeignKey("client.client_key"),
         nullable=False,
     )
-    client = db.relationship('Client')
+    client = db.relationship("Client")
 
     token = db.Column(db.String(255), index=True, unique=True)
     secret = db.Column(db.String(255), nullable=False)
@@ -91,15 +89,17 @@ class Grant(db.Model):
 class Token(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     client_key = db.Column(
-        db.String(40), db.ForeignKey('client.client_key'),
+        db.String(40),
+        db.ForeignKey("client.client_key"),
         nullable=False,
     )
-    client = db.relationship('Client')
+    client = db.relationship("Client")
 
     user_id = db.Column(
-        db.Integer, db.ForeignKey('user.id'),
+        db.Integer,
+        db.ForeignKey("user.id"),
     )
-    user = db.relationship('User')
+    user = db.relationship("User")
 
     token = db.Column(db.String(255))
     secret = db.Column(db.String(255))
@@ -119,15 +119,15 @@ def prepare_app(app):
     db.create_all()
 
     client1 = Client(
-        client_key='dev', client_secret='dev',
+        client_key="dev",
+        client_secret="dev",
         _redirect_uris=(
-            'http://localhost:8000/authorized '
-            'http://localhost/authorized'
+            "http://localhost:8000/authorized " "http://localhost/authorized"
         ),
-        _realms='email',
+        _realms="email",
     )
 
-    user = User(username='admin')
+    user = User(username="admin")
 
     try:
         db.session.add(client1)
@@ -157,9 +157,9 @@ def create_server(app):
         tok = Token(
             client_key=req.client.client_key,
             user_id=req.user.id,
-            token=token['oauth_token'],
-            secret=token['oauth_token_secret'],
-            _realms=token['oauth_authorized_realms'],
+            token=token["oauth_token"],
+            secret=token["oauth_token_secret"],
+            _realms=token["oauth_authorized_realms"],
         )
         db.session.add(tok)
         db.session.commit()
@@ -172,12 +172,12 @@ def create_server(app):
     @oauth.grantsetter
     def save_request_token(token, oauth):
         if oauth.realms:
-            realms = ' '.join(oauth.realms)
+            realms = " ".join(oauth.realms)
         else:
             realms = None
         grant = Grant(
-            token=token['oauth_token'],
-            secret=token['oauth_token_secret'],
+            token=token["oauth_token"],
+            secret=token["oauth_token_secret"],
             client_key=oauth.client.client_key,
             redirect_uri=oauth.redirect_uri,
             _realms=realms,
@@ -193,7 +193,7 @@ def create_server(app):
     @oauth.verifiersetter
     def save_verifier(token, verifier, *args, **kwargs):
         tok = Grant.query.filter_by(token=token).first()
-        tok.verifier = verifier['oauth_verifier']
+        tok.verifier = verifier["oauth_verifier"]
         tok.user_id = g.user.id
         db.session.add(tok)
         db.session.commit()
@@ -212,44 +212,44 @@ def create_server(app):
         user = User.query.get(1)
         g.user = user
 
-    @app.route('/home')
+    @app.route("/home")
     def home():
-        return render_template('home.html')
+        return render_template("home.html")
 
-    @app.route('/oauth/authorize', methods=['GET', 'POST'])
+    @app.route("/oauth/authorize", methods=["GET", "POST"])
     @oauth.authorize_handler
     def authorize(*args, **kwargs):
         # NOTICE: for real project, you need to require login
-        if request.method == 'GET':
+        if request.method == "GET":
             # render a page for user to confirm the authorization
-            return render_template('confirm.html')
+            return render_template("confirm.html")
 
-        confirm = request.form.get('confirm', 'no')
-        return confirm == 'yes'
+        confirm = request.form.get("confirm", "no")
+        return confirm == "yes"
 
-    @app.route('/oauth/request_token')
+    @app.route("/oauth/request_token")
     @oauth.request_token_handler
     def request_token():
         return {}
 
-    @app.route('/oauth/access_token')
+    @app.route("/oauth/access_token")
     @oauth.access_token_handler
     def access_token():
         return {}
 
-    @app.route('/api/email')
-    @oauth.require_oauth('email')
+    @app.route("/api/email")
+    @oauth.require_oauth("email")
     def email_api():
         oauth = request.oauth
-        return jsonify(email='me@oauth.net', username=oauth.user.username)
+        return jsonify(email="me@oauth.net", username=oauth.user.username)
 
-    @app.route('/api/address/<city>')
-    @oauth.require_oauth('address')
+    @app.route("/api/address/<city>")
+    @oauth.require_oauth("address")
     def address_api(city):
         oauth = request.oauth
         return jsonify(address=city, username=oauth.user.username)
 
-    @app.route('/api/method', methods=['GET', 'POST', 'PUT', 'DELETE'])
+    @app.route("/api/method", methods=["GET", "POST", "PUT", "DELETE"])
     @oauth.require_oauth()
     def method_api():
         return jsonify(method=request.method)
@@ -257,16 +257,19 @@ def create_server(app):
     return app
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     from flask import Flask
+
     app = Flask(__name__)
     app.debug = True
-    app.secret_key = 'development'
-    app.config.update({
-        'SQLALCHEMY_DATABASE_URI': 'sqlite:///oauth1.sqlite',
-        'OAUTH1_PROVIDER_ENFORCE_SSL': False,
-        'OAUTH1_PROVIDER_KEY_LENGTH': (3, 30),
-        'OAUTH1_PROVIDER_REALMS': ['email', 'address']
-    })
+    app.secret_key = "development"
+    app.config.update(
+        {
+            "SQLALCHEMY_DATABASE_URI": "sqlite:///oauth1.sqlite",
+            "OAUTH1_PROVIDER_ENFORCE_SSL": False,
+            "OAUTH1_PROVIDER_KEY_LENGTH": (3, 30),
+            "OAUTH1_PROVIDER_REALMS": ["email", "address"],
+        }
+    )
     app = create_server(app)
     app.run()
