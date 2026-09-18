@@ -1,0 +1,37 @@
+# -*- coding: utf-8 -*-
+#
+# Copyright (C) 2026 CERN.
+# Copyright (C) 2026 KTH Royal Institute of Technology.
+#
+# Flask-OAuthlib-Invenio is free software; you can redistribute it and/or modify it
+# under the terms of the BSD 3 Clause License; see LICENSE file for more details.
+
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - "feature/*"
+      - "maint-**"
+  pull_request:
+    branches:
+      - master
+      - "maint-**"
+      - "feature/**"
+  schedule:
+    - cron: "0 3 * * 6"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason"
+        required: false
+        default: "Manual trigger"
+
+jobs:
+  Python:
+    uses: inveniosoftware/workflows/.github/workflows/tests-python.yml@master
+    with:
+      python-version: '["3.12", "3.14"]'
+      extras: "tests"
+      search-service: '[""]'
