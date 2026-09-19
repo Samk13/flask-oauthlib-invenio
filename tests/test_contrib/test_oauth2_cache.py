@@ -2,7 +2,6 @@
 
 import os
 
-import pytest
 from flask import Flask
 from invenio_cache import InvenioCache
 
@@ -60,13 +59,10 @@ def test_simple_cache_grant_is_consumed_once():
         assert_grant_is_consumed(provider)
 
 
-@pytest.mark.skipif(
-    not os.environ.get("CACHE_REDIS_URL"), reason="CACHE_REDIS_URL is not set"
-)
 def test_redis_cache_grant_is_consumed_once():
-    pytest.importorskip("redis")
     app, provider = create_provider(
-        "RedisCache", CACHE_REDIS_URL=os.environ["CACHE_REDIS_URL"]
+        "RedisCache",
+        CACHE_REDIS_URL=os.environ.get("CACHE_REDIS_URL", "redis://127.0.0.1:6379/0"),
     )
     with app.app_context():
         assert_grant_is_consumed(provider)

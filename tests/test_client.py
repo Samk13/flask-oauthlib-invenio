@@ -3,6 +3,7 @@ from flask import Flask
 
 from flask_oauthlib.client import (
     OAuth,
+    OAuthException,
     OAuthRemoteApp,
     encode_request_data,
     parse_response,
@@ -180,6 +181,42 @@ class TestOAuthRemoteApp(object):
         resp, content = OAuthRemoteApp.http_request("http://example.com")
         assert resp.code == 404
         assert b"o" in content
+
+    def test_oauth2_state_mismatch_never_exchanges_code(self):
+        app = Flask(__name__)
+        app.secret_key = "test"
+        oauth = OAuth(app)
+        remote = oauth.remote_app(
+            "remote",
+            consumer_key="key",
+            consumer_secret="secret",
+            request_token_url=None,
+            access_token_url="https://provider.example/token",
+            authorize_url="https://provider.example/authorize",
+        )
+        _ = remote.authlib_client
+        remote.http_request = lambda *args, **kwargs: pytest.fail(
+            "state mismatch must not trigger a token request"
+        )
+
+        with app.test_request_context("/callback?code=valid&state=tampered"):
+            with pytest.raises(OAuthException) as exc:
+                remote.authorized_response()
+
+        assert exc.value.type == "mismatching_state"
+
+    def test_oauth1_rsa_key_is_forwarded(self):
+        oauth = OAuth()
+        remote = oauth.remote_app(
+            "remote",
+            consumer_key="key",
+            consumer_secret="secret",
+            request_token_url="https://provider.example/request-token",
+            rsa_key="private-key",
+            signature_method="RSA-SHA1",
+        )
+
+        assert remote._oauth1_auth().rsa_key == "private-key"
 
     def test_token_types(self):
         oauth = OAuth()

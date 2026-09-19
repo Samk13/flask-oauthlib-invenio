@@ -1,7 +1,8 @@
 # coding: utf-8
 """Authlib-backed compatibility shell for OAuth 2 providers."""
 
-import datetime
+import hashlib
+import json
 import logging
 from functools import wraps
 from urllib.parse import urlencode
@@ -11,15 +12,16 @@ from authlib.integrations.flask_oauth2.requests import FlaskOAuth2Request
 from authlib.oauth2 import OAuth2Error
 from authlib.oauth2.rfc6749 import grants
 from authlib.oauth2.rfc6749.errors import (
-    AccessDeniedError,
     InvalidGrantError,
     InvalidRequestError,
     UnauthorizedClientError,
 )
+from authlib.oauth2.rfc6749.hooks import hooked
 from authlib.oauth2.rfc6750 import BearerTokenValidator
 from authlib.oauth2.rfc6750.errors import InsufficientScopeError, InvalidTokenError
 from authlib.oauth2.rfc7009 import RevocationEndpoint
-from flask import abort, current_app, g, redirect, request, url_for
+from authlib.oauth2.rfc7636 import CodeChallenge
+from flask import abort, g, redirect, request, session, url_for
 from werkzeug.utils import cached_property, import_string
 
 __all__ = ("OAuth2Provider", "OAuth2RequestValidator")
@@ -137,6 +139,7 @@ class OAuth2Provider(object):
                 "none",
             ]
 
+            @hooked
             def validate_token_request(self):
                 code = self.request.form.get("code")
                 if code is None:
@@ -153,20 +156,24 @@ class OAuth2Provider(object):
                     raise error
                 redirect_uri = self.request.payload.redirect_uri
                 original_redirect_uri = authorization_code.get_redirect_uri()
-                # Flask-OAuthlib legacy tests/apps often omitted redirect_uri on
-                # token exchange. Keep strict comparison only when supplied.
-                if (
-                    redirect_uri
-                    and original_redirect_uri
-                    and redirect_uri != original_redirect_uri
-                ):
+                if original_redirect_uri and redirect_uri != original_redirect_uri:
                     raise InvalidGrantError("Invalid 'redirect_uri' in request.")
                 self.request.client = client
                 self.request.authorization_code = authorization_code
 
             def save_authorization_code(self, code, req):
                 _adapt_authlib_request(req)
-                provider._grantsetter(req.client.client_id, {"code": code}, req)
+                provider._grantsetter(
+                    req.client.client_id,
+                    {
+                        "code": code,
+                        "code_challenge": req.payload.data.get("code_challenge"),
+                        "code_challenge_method": req.payload.data.get(
+                            "code_challenge_method"
+                        ),
+                    },
+                    req,
+                )
 
             def query_authorization_code(self, code, client):
                 return provider._grantgetter(client_id=client.client_id, code=code)
@@ -178,7 +185,14 @@ class OAuth2Provider(object):
                 return authorization_code.user
 
         class ImplicitGrant(grants.ImplicitGrant):
-            TOKEN_ENDPOINT_AUTH_METHODS = ["none", "client_secret_post"]
+            def authenticate_token_endpoint_client(self):
+                # The implicit flow runs at the authorization endpoint. Client
+                # secrets must not be submitted through the user agent; the
+                # already validated client_id and redirect URI identify it.
+                client = provider._clientgetter(self.request.payload.client_id)
+                self.request.client = client
+                self.request.auth_method = "none"
+                return client
 
         class PasswordGrant(grants.ResourceOwnerPasswordCredentialsGrant):
             TOKEN_ENDPOINT_HTTP_METHODS = ["POST", "GET"]
@@ -225,7 +239,9 @@ class OAuth2Provider(object):
                 # by the tokensetter when a new token is saved.
                 return None
 
-        self.server.register_grant(AuthorizationCodeGrant)
+        self.server.register_grant(
+            AuthorizationCodeGrant, [_OptionalCodeChallenge(required=False)]
+        )
         self.server.register_grant(ImplicitGrant)
         self.server.register_grant(PasswordGrant)
         self.server.register_grant(ClientCredentialsGrant)
@@ -253,7 +269,15 @@ class OAuth2Provider(object):
 
     def _save_token(self, token, req):
         _adapt_authlib_request(req)
-        return self._tokensetter(TokenDict(token), req)
+        compat_token = TokenDict(token)
+        result = self._tokensetter(compat_token, req)
+        # Legacy token setters may enrich token endpoint JSON responses (for
+        # example with user information). Non-scalar custom values cannot be
+        # encoded into an implicit-flow URI fragment, so keep that response to
+        # the generated OAuth token fields.
+        if req.payload.response_type != "token":
+            token.update(compat_token)
+        return result
 
     def before_request(self, f):
         self._before_request_funcs.append(f)
@@ -296,61 +320,89 @@ class OAuth2Provider(object):
         return f
 
     def authorize_handler(self, f):
-        """Authorization handler decorator."""
+        """Validate and bind authorization consent before invoking a view."""
 
         @wraps(f)
         def decorated(*args, **kwargs):
-            redirect_uri = request.values.get("redirect_uri", self.error_uri)
-            if request.method in ("GET", "HEAD"):
-                if not request.values.get("client_id"):
-                    location = (
-                        self.error_uri
-                        + "?error=invalid_request&error_description=Missing+client_id+parameter."
+            if not request.values.get("client_id"):
+                location = (
+                    self.error_uri
+                    + "?error=invalid_request&error_description=Missing+client_id+parameter."
+                )
+                return self._on_exception(
+                    InvalidRequestError("Missing client_id parameter."), location
+                )
+            client = self._clientgetter(request.values.get("client_id"))
+            if not client:
+                location = (
+                    self.error_uri
+                    + "?error=invalid_request&error_description=Invalid+client_id+parameter."
+                )
+                return self._on_exception(
+                    InvalidRequestError("Invalid client_id parameter."), location
+                )
+            duplicated = next(
+                (key for key in request.values if len(request.values.getlist(key)) > 1),
+                None,
+            )
+            if duplicated:
+                return self._handle_authorization_error(
+                    InvalidRequestError("Multiple %s parameters." % duplicated)
+                )
+            if not request.values.get("response_type"):
+                return self._handle_authorization_error(
+                    InvalidRequestError(
+                        "Missing response_type parameter.",
+                        redirect_uri=_validated_redirect_uri(client),
                     )
-                    return self._on_exception(
-                        InvalidRequestError("Missing client_id parameter."), location
+                )
+            try:
+                grant = self.server.get_consent_grant(end_user=_current_user())
+                req = grant.request
+            except OAuth2Error as error:
+                return self._handle_authorization_error(error)
+            except Exception as error:  # pragma: no cover - defensive compat
+                log.exception(error)
+                return self._on_exception(error, self.error_uri)
+
+            fingerprint = _authorization_request_fingerprint(req)
+            if request.method == "GET":
+                pending = session.setdefault("oauth2_pending_consents", [])
+                if fingerprint not in pending:
+                    pending.append(fingerprint)
+                    del pending[:-10]
+                    session.modified = True
+            elif request.method == "POST":
+                pending = session.get("oauth2_pending_consents", [])
+                if fingerprint not in pending:
+                    return self._handle_authorization_error(
+                        InvalidRequestError(
+                            "Authorization consent was not initiated or has expired."
+                        )
                     )
-                if request.values.get("client_id") and not self._clientgetter(
-                    request.values.get("client_id")
-                ):
-                    location = (
-                        self.error_uri
-                        + "?error=invalid_request&error_description=Invalid+client_id+parameter."
-                    )
-                    return self._on_exception(
-                        InvalidRequestError("Invalid client_id parameter."), location
-                    )
-                try:
-                    grant = self.server.get_consent_grant(end_user=_current_user())
-                    req = grant.request
-                    kwargs["scopes"] = (req.scope or "").split()
-                    kwargs["request"] = req
-                    kwargs["client_id"] = req.client.client_id
-                    kwargs["redirect_uri"] = req.payload.redirect_uri
-                    kwargs["response_type"] = req.payload.response_type
-                    kwargs["state"] = req.payload.state
-                except OAuth2Error as error:
-                    return self._handle_authorization_error(error, redirect_uri)
-                except Exception as error:  # pragma: no cover - defensive compat
-                    log.exception(error)
-                    return self._on_exception(error, self.error_uri)
+                pending.remove(fingerprint)
+                session["oauth2_pending_consents"] = pending
+
+            kwargs["scopes"] = (req.scope or "").split()
+            kwargs["request"] = req
+            kwargs["client_id"] = req.client.client_id
+            kwargs["redirect_uri"] = req.payload.redirect_uri
+            kwargs["response_type"] = req.payload.response_type
+            kwargs["state"] = req.payload.state
             try:
                 rv = f(*args, **kwargs)
             except OAuth2Error as error:
-                return self._handle_authorization_error(error, redirect_uri)
+                return self._handle_authorization_error(error)
             if not isinstance(rv, bool):
                 return rv
-            if not rv:
-                error = AccessDeniedError(
-                    redirect_uri=redirect_uri, state=request.values.get("state")
-                )
-                return self._handle_authorization_error(error, redirect_uri)
-            return self.confirm_authorization_request()
+            return self.confirm_authorization_request(grant, req, granted=rv)
 
         return decorated
 
-    def _handle_authorization_error(self, error, redirect_uri):
-        uri = getattr(error, "redirect_uri", None) or redirect_uri or self.error_uri
+    def _handle_authorization_error(self, error):
+        # Authlib sets error.redirect_uri only after validating it against the
+        # client. Never use request.redirect_uri as an error fallback.
+        uri = getattr(error, "redirect_uri", None) or self.error_uri
         try:
             status, body, headers = error(uri)
             location = dict(headers).get("Location")
@@ -366,24 +418,32 @@ class OAuth2Provider(object):
         location = location.replace("Redirect+URI+", "Mismatching+redirect+URI+")
         return self._on_exception(error, location)
 
-    def confirm_authorization_request(self):
-        """Complete an approved authorization request."""
+    def confirm_authorization_request(self, grant, oauth_request, granted=True):
+        """Complete a validated authorization consent request."""
         try:
-            if "scope" in request.values and not request.values.get("scope"):
-                redirect_uri = request.values.get("redirect_uri") or self.error_uri
-                return redirect(redirect_uri + "?error=Scopes+must+be+set")
-            grant_user = _current_user()
-            return self.server.create_authorization_response(grant_user=grant_user)
-        except OAuth2Error as error:
-            return self._handle_authorization_error(
-                error, request.values.get("redirect_uri", self.error_uri)
+            return self.server.create_authorization_response(
+                request=oauth_request,
+                grant_user=_current_user() if granted else None,
+                grant=grant,
             )
+        except OAuth2Error as error:
+            return self._handle_authorization_error(error)
+
+    def _acquire_token(self, scopes, oauth_request):
+        """Acquire a bearer token, retaining legacy query/form support."""
+        token_string = request.values.get("access_token")
+        if token_string and not request.headers.get("Authorization"):
+            validator = _BearerTokenValidator(self)
+            token = validator.authenticate_token(token_string)
+            validator.validate_token(token, scopes, oauth_request)
+            return token
+        return self.resource_protector.acquire_token(scopes)
 
     def verify_request(self, scopes):
         """Verify current request and return ``(valid, request)``."""
         req = self.server.create_oauth2_request(request)
         try:
-            token = self.resource_protector.acquire_token(scopes)
+            token = self._acquire_token(scopes, req)
         except OAuth2Error as error:
             req.error_message = getattr(error, "description", None) or str(error)
             return False, req
@@ -399,7 +459,12 @@ class OAuth2Provider(object):
         @wraps(f)
         def decorated(*args, **kwargs):
             f(*args, **kwargs)
-            return self.server.create_token_response()
+            response = self.server.create_token_response()
+            if response.status_code == 400:
+                payload = response.get_json(silent=True) or {}
+                if payload.get("error") == "invalid_client":
+                    response.status_code = 401
+            return response
 
         return decorated
 
@@ -465,6 +530,40 @@ class _BearerTokenValidator(BearerTokenValidator):
             raise InsufficientScopeError()
 
 
+class _OptionalCodeChallenge(CodeChallenge):
+    """PKCE extension compatible with legacy authorization-code objects."""
+
+    def get_authorization_code_challenge(self, authorization_code):
+        return getattr(authorization_code, "code_challenge", None)
+
+    def get_authorization_code_challenge_method(self, authorization_code):
+        return getattr(authorization_code, "code_challenge_method", None)
+
+
+def _validated_redirect_uri(client):
+    """Return only a redirect URI validated against the OAuth client."""
+    if len(request.values.getlist("redirect_uri")) > 1:
+        return None
+    requested_uri = request.values.get("redirect_uri")
+    if requested_uri and client.check_redirect_uri(requested_uri):
+        return requested_uri
+    if not requested_uri:
+        return client.get_default_redirect_uri()
+    return None
+
+
+def _authorization_request_fingerprint(oauth_request):
+    """Fingerprint validated protocol parameters, excluding consent form fields."""
+    excluded = {"confirm", "csrf_token"}
+    values = sorted(
+        (key, tuple(items))
+        for key, items in oauth_request.payload.datalist.items()
+        if key not in excluded
+    )
+    encoded = json.dumps(values, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def _adapt_authlib_request(req):
     """Add Flask-OAuthlib request attribute aliases to Authlib requests."""
     scope = req.scope or req.payload.scope or ""
@@ -503,7 +602,7 @@ class _CompatAuthorizationServer(AuthorizationServer):
         """
         req = self.create_oauth2_request(request)
         try:
-            token = self.provider.resource_protector.acquire_token(scopes)
+            token = self.provider._acquire_token(scopes, req)
         except OAuth2Error as error:
             req.error_message = getattr(error, "description", None) or str(error)
             return False, req

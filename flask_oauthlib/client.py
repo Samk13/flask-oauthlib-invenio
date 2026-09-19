@@ -460,6 +460,7 @@ class OAuthRemoteApp(object):
             token=token,
             token_secret=token_secret,
             redirect_uri=callback,
+            rsa_key=self.rsa_key,
             verifier=verifier,
             signature_method=self.signature_method or SIGNATURE_HMAC_SHA1,
             realm=(self.request_token_params or {}).get("realm"),
@@ -543,6 +544,11 @@ class OAuthRemoteApp(object):
             verifier = args.get("oauth_verifier")
             if not oauth_token or not verifier:
                 return None
+            if oauth_token != request_token.get("oauth_token"):
+                raise OAuthException(
+                    "Mismatching OAuth request token", type="token_mismatch"
+                )
+            session.pop("%s_oauth_request_token" % self.name, None)
             auth = self._oauth1_auth(
                 token=oauth_token,
                 token_secret=request_token.get("oauth_token_secret"),
@@ -563,31 +569,25 @@ class OAuthRemoteApp(object):
             if "oauth_token" not in data:
                 raise OAuthException("Failed to fetch access token", data=data)
             return data
-        try:
-            return self.authlib_client.authorize_access_token()
-        except MismatchingStateError:
-            # Legacy Flask-OAuthlib allowed tests/apps to hit the authorization
-            # endpoint directly without a prior client-side state session. Fall
-            # back to a state-less code exchange for that compatibility path.
-            code = request.args.get("code")
-            if not code:
-                return None
-            return self.handle_oauth2_response(request.args)
-        except OAuthError as exc:
-            # Flask-OAuthlib returned None on OAuth callback errors so the
-            # application callback could render based on request.args['error'].
-            if request.args.get("error") or getattr(exc, "error", None) in {
-                "access_denied",
-                "missing_code",
-            }:
-                return None
-            # If Authlib state validation fails for legacy direct flows, try
-            # the Flask-OAuthlib-style token exchange before surfacing error.
-            if request.args.get("code"):
-                return self.handle_oauth2_response(request.args)
-            raise OAuthException(str(exc), type=getattr(exc, "error", None)) from exc
+        if request.args.get("error"):
+            return None
+        client = self.authlib_client
+        state = request.args.get("state")
+        state_data = client.framework.get_state_data(session, state) if state else None
+        if not state_data:
+            # Missing, mismatched and replayed state all fail before any token
+            # request is made.
+            exc = MismatchingStateError()
+            raise OAuthException(str(exc), type="mismatching_state") from exc
+        client.framework.clear_state_data(session, state)
 
-    def handle_oauth2_response(self, args):
+        token = self.handle_oauth2_response(request.args, state_data=state_data)
+        if token and "id_token" in token and state_data.get("nonce"):
+            token["userinfo"] = client.parse_id_token(token, nonce=state_data["nonce"])
+        client.token = token
+        return token
+
+    def handle_oauth2_response(self, args, state_data=None):
         """Legacy OAuth2 code exchange using the overridable HTTP hook."""
         code = args.get("code")
         if not code:
@@ -597,7 +597,9 @@ class OAuthRemoteApp(object):
             "code": code,
             "client_id": self.consumer_key,
             "client_secret": self.consumer_secret,
-            "redirect_uri": session.get("%s_oauthredir" % self.name),
+            "redirect_uri": (state_data or {}).get("redirect_uri")
+            or session.get("%s_oauthredir" % self.name),
+            "code_verifier": (state_data or {}).get("code_verifier"),
         }
         remote_args.update(self.access_token_params)
         remote_args = {k: v for k, v in remote_args.items() if v is not None}

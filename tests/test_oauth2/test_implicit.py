@@ -32,16 +32,14 @@ class TestDefaultProvider(TestCase):
         self.oauth_client = oauth_client
 
     def test_implicit(self):
-        rv = self.client.post(
-            "/oauth/authorize",
-            data={
-                "response_type": "token",
-                "confirm": "yes",
-                "scope": "email",
-                "client_id": self.oauth_client.client_id,
-                "client_secret": self.oauth_client.client_secret,
-            },
+        url = (
+            "/oauth/authorize?response_type=token&scope=email&client_id="
+            + self.oauth_client.client_id
+            + "&client_secret="
+            + self.oauth_client.client_secret
         )
+        self.client.get(url)
+        rv = self.client.post(url, data={"confirm": "yes"})
         assert "access_token" in rv.location
 
 

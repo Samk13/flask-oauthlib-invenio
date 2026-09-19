@@ -101,17 +101,23 @@ token using Memcache, Redis, or some other caching system.
 
 An example::
 
-    oauth = OAuth2Provider(app)
-    app.config.update({'OAUTH2_CACHE_TYPE': 'redis'})
+    from invenio_cache import InvenioCache
 
+    app.config.update({
+        'CACHE_TYPE': 'RedisCache',
+        'CACHE_REDIS_URL': 'redis://127.0.0.1:6379/0',
+    })
+    InvenioCache(app)
+    oauth = OAuth2Provider(app)
     bind_cache_grant(app, oauth, current_user)
 
 - `app`: flask application
 - `oauth`: OAuth2Provider instance
 - `current_user`: a function that returns the current user
 
-The configuration options are described below. The :meth:`bind_cache_grant`
-will use the configuration options from `Flask-Cache` if they are set, else it
-will set them to the following defaults. Any configuration specific to
-:meth:`bind_cache_grant` will take precedence over any `Flask-Cache`
-configuration that has been set.
+The binding uses the application's Invenio-Cache/Flask-Caching extension.
+``CACHE_TYPE`` is therefore authoritative and must use Flask-Caching backend
+names such as ``RedisCache``, ``SimpleCache``, ``MemcachedCache`` or
+``FileSystemCache``. Configure backend-specific values with the corresponding
+``CACHE_*`` options. The legacy ``OAUTH2_CACHE_TYPE`` and
+``OAUTH2_CACHE_REDIS_*`` options are no longer read.

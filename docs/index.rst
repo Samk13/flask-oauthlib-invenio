@@ -42,6 +42,7 @@ instructions for getting the most out of Flask-OAuthlib
 
    intro
    install
+   authlib-migration
    client
    oauth1
    oauth2

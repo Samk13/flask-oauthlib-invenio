@@ -37,6 +37,8 @@ class Grant(object):
         redirect_uri=None,
         scopes=None,
         user=None,
+        code_challenge=None,
+        code_challenge_method=None,
     ):
         self._cache = cache
         self.client_id = client_id
@@ -44,6 +46,8 @@ class Grant(object):
         self.redirect_uri = redirect_uri
         self.scopes = scopes
         self.user = user
+        self.code_challenge = code_challenge
+        self.code_challenge_method = code_challenge_method
         self._key = None
 
     def delete(self):
@@ -65,7 +69,15 @@ class Grant(object):
         return getattr(self, item)
 
     def keys(self):
-        return ["client_id", "code", "redirect_uri", "scopes", "user"]
+        return [
+            "client_id",
+            "code",
+            "redirect_uri",
+            "scopes",
+            "user",
+            "code_challenge",
+            "code_challenge_method",
+        ]
 
     def get_redirect_uri(self):
         """Return redirect URI for Authlib authorization-code grants."""
@@ -131,6 +143,8 @@ def bind_cache_grant(app, provider, current_user, config_prefix="OAUTH2"):
             redirect_uri=request.redirect_uri,
             scopes=request.scopes,
             user=current_user(),
+            code_challenge=code.get("code_challenge"),
+            code_challenge_method=code.get("code_challenge_method"),
         )
         grant.key = _key(client_id, grant.code)
         log.debug("Set Grant Token with key %s" % grant.key)

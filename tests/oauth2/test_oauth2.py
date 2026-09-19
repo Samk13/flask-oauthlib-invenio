@@ -41,6 +41,12 @@ class OAuthSuite(BaseSuite):
         self.oauth_client = client
         return app
 
+    def approve_login(self):
+        rv = self.client.get("/login")
+        authorization_url = clean_url(rv.location)
+        self.client.get(authorization_url)
+        return self.client.post(authorization_url, data={"confirm": "yes"})
+
 
 authorize_url = (
     "/oauth/authorize?response_type=code&client_id=dev"
@@ -71,6 +77,7 @@ class TestWebAuth(OAuthSuite):
         rv = self.client.post(authorize_url, data=dict(confirm="no"))
         assert "access_denied" in rv.location
 
+        self.client.get(authorize_url)
         rv = self.client.post(authorize_url, data=dict(confirm="yes"))
         # success
         assert "code=" in rv.location
@@ -79,11 +86,13 @@ class TestWebAuth(OAuthSuite):
         # test state on access denied
         # According to RFC 6749, state should be preserved on error response if it's present in the client request.
         # Reference: https://tools.ietf.org/html/rfc6749#section-4.1.2
+        self.client.get(authorize_url + "&state=foo")
         rv = self.client.post(authorize_url + "&state=foo", data=dict(confirm="no"))
         assert "error=access_denied" in rv.location
         assert "state=foo" in rv.location
 
         # test state on success
+        self.client.get(authorize_url + "&state=foo")
         rv = self.client.post(authorize_url + "&state=foo", data=dict(confirm="yes"))
         assert "code=" in rv.location
         assert "state=foo" in rv.location
@@ -93,12 +102,12 @@ class TestWebAuth(OAuthSuite):
         assert rv.headers["X-Client-ID"] == "dev"
 
     def test_get_access_token(self):
-        rv = self.client.post(authorize_url, data={"confirm": "yes"})
+        rv = self.approve_login()
         rv = self.client.get(clean_url(rv.location))
         assert b"access_token" in rv.data
 
     def test_full_flow(self):
-        rv = self.client.post(authorize_url, data={"confirm": "yes"})
+        rv = self.approve_login()
         rv = self.client.get(clean_url(rv.location))
         assert b"access_token" in rv.data
 
@@ -143,7 +152,7 @@ class TestWebAuth(OAuthSuite):
         assert rv.status_code == 200
 
     def test_get_client(self):
-        rv = self.client.post(authorize_url, data={"confirm": "yes"})
+        rv = self.approve_login()
         rv = self.client.get(clean_url(rv.location))
         rv = self.client.get("/client")
         assert b"dev" in rv.data
@@ -154,6 +163,7 @@ class TestWebAuth(OAuthSuite):
             "&redirect_uri=http%3A%2F%2Flocalhost%3A8000%2Fauthorized"
             "&scope=email"
         )
+        self.client.get(authorize_url)
         rv = self.client.post(authorize_url, data={"confirm": "yes"})
         rv = self.client.get(clean_url(rv.location))
         assert b"error" in rv.data
@@ -213,7 +223,7 @@ class TestRefreshToken(OAuthSuite):
         assert b"access_token" in rv.data
 
     def test_refresh_token_in_authorization_code(self):
-        rv = self.client.post(authorize_url, data={"confirm": "yes"})
+        rv = self.approve_login()
         rv = self.client.get(clean_url(rv.location))
         data = json.loads(u(rv.data))
 
@@ -379,7 +389,7 @@ class TestTokenGenerator(OAuthSuite):
         return default_provider(app)
 
     def test_get_access_token(self):
-        rv = self.client.post(authorize_url, data={"confirm": "yes"})
+        rv = self.approve_login()
         rv = self.client.get(clean_url(rv.location))
         data = json.loads(u(rv.data))
         assert data["access_token"] == "foobar"
@@ -401,7 +411,7 @@ class TestRefreshTokenGenerator(OAuthSuite):
         return default_provider(app)
 
     def test_get_access_token(self):
-        rv = self.client.post(authorize_url, data={"confirm": "yes"})
+        rv = self.approve_login()
         rv = self.client.get(clean_url(rv.location))
         data = json.loads(u(rv.data))
         assert data["access_token"] == "foobar"
