@@ -78,7 +78,7 @@ class OAuth2Provider(object):
         if self._server is None:
             self.app.config.setdefault("OAUTH2_REFRESH_TOKEN_GENERATOR", True)
             self._server = _CompatAuthorizationServer(
-                self.app, self._clientgetter, self._save_token
+                self.app, self._clientgetter, self._save_token, provider=self
             )
             self._configure_token_generators()
             self._register_grants()
@@ -482,10 +482,36 @@ class _CompatFlaskOAuth2Request(FlaskOAuth2Request):
 
 
 class _CompatAuthorizationServer(AuthorizationServer):
+    def __init__(self, *args, provider=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.provider = provider
+
     def create_oauth2_request(self, request):
         from flask import request as flask_req
 
         return _CompatFlaskOAuth2Request(flask_req)
+
+    def verify_request(self, uri, http_method, body, headers, scopes):
+        """Flask-OAuthlib compatible resource verification method.
+
+        Invenio-OAuth2Server historically called ``oauth2.server.verify_request``
+        directly from a ``before_request`` hook. Authlib verifies bearer tokens
+        through ``ResourceProtector`` instead, so this adapter preserves the old
+        server method while delegating validation to the provider's protector.
+        The explicit request arguments are accepted for API compatibility; the
+        Authlib Flask integration validates the active Flask request.
+        """
+        req = self.create_oauth2_request(request)
+        try:
+            token = self.provider.resource_protector.acquire_token(scopes)
+        except OAuth2Error as error:
+            req.error_message = getattr(error, "description", None) or str(error)
+            return False, req
+        req.access_token = token
+        req.user = token.user
+        req.scopes = scopes
+        req.client = token.client
+        return True, req
 
 
 def _current_user():
