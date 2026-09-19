@@ -49,6 +49,7 @@ class OAuth2Provider(object):
         self._validator_class = validator_class
         self._server = None
         self._require_oauth = None
+        self._supports_pkce = False
         if app:
             self.init_app(app)
 
@@ -131,8 +132,12 @@ class OAuth2Provider(object):
     def _register_grants(self):
         provider = self
 
+        token_methods = ["POST"]
+        if self.app.config.get("OAUTH2_ALLOW_LEGACY_TOKEN_ENDPOINT_GET", True):
+            token_methods.append("GET")
+
         class AuthorizationCodeGrant(grants.AuthorizationCodeGrant):
-            TOKEN_ENDPOINT_HTTP_METHODS = ["POST", "GET"]
+            TOKEN_ENDPOINT_HTTP_METHODS = token_methods
             TOKEN_ENDPOINT_AUTH_METHODS = [
                 "client_secret_basic",
                 "client_secret_post",
@@ -195,7 +200,7 @@ class OAuth2Provider(object):
                 return client
 
         class PasswordGrant(grants.ResourceOwnerPasswordCredentialsGrant):
-            TOKEN_ENDPOINT_HTTP_METHODS = ["POST", "GET"]
+            TOKEN_ENDPOINT_HTTP_METHODS = token_methods
             TOKEN_ENDPOINT_AUTH_METHODS = [
                 "client_secret_basic",
                 "client_secret_post",
@@ -210,7 +215,7 @@ class OAuth2Provider(object):
                 )
 
         class ClientCredentialsGrant(grants.ClientCredentialsGrant):
-            TOKEN_ENDPOINT_HTTP_METHODS = ["POST", "GET"]
+            TOKEN_ENDPOINT_HTTP_METHODS = token_methods
             TOKEN_ENDPOINT_AUTH_METHODS = ["client_secret_basic", "client_secret_post"]
 
             def create_token_response(self):
@@ -220,7 +225,7 @@ class OAuth2Provider(object):
                 return super().create_token_response()
 
         class RefreshTokenGrant(grants.RefreshTokenGrant):
-            TOKEN_ENDPOINT_HTTP_METHODS = ["POST", "GET"]
+            TOKEN_ENDPOINT_HTTP_METHODS = token_methods
             TOKEN_ENDPOINT_AUTH_METHODS = [
                 "client_secret_basic",
                 "client_secret_post",
@@ -240,7 +245,8 @@ class OAuth2Provider(object):
                 return None
 
         self.server.register_grant(
-            AuthorizationCodeGrant, [_OptionalCodeChallenge(required=False)]
+            AuthorizationCodeGrant,
+            [_OptionalCodeChallenge(self, required=False)],
         )
         self.server.register_grant(ImplicitGrant)
         self.server.register_grant(PasswordGrant)
@@ -431,7 +437,9 @@ class OAuth2Provider(object):
 
     def _acquire_token(self, scopes, oauth_request):
         """Acquire a bearer token, retaining legacy query/form support."""
-        token_string = request.values.get("access_token")
+        token_string = None
+        if self.app.config.get("OAUTH2_ALLOW_LEGACY_BEARER_TOKEN_TRANSPORT", True):
+            token_string = request.values.get("access_token")
         if token_string and not request.headers.get("Authorization"):
             validator = _BearerTokenValidator(self)
             token = validator.authenticate_token(token_string)
@@ -532,6 +540,20 @@ class _BearerTokenValidator(BearerTokenValidator):
 
 class _OptionalCodeChallenge(CodeChallenge):
     """PKCE extension compatible with legacy authorization-code objects."""
+
+    def __init__(self, provider, required=False):
+        super().__init__(required=required)
+        self.provider = provider
+
+    def validate_code_challenge(self, grant, redirect_uri):
+        super().validate_code_challenge(grant, redirect_uri)
+        if (
+            grant.request.payload.data.get("code_challenge")
+            and not self.provider._supports_pkce
+        ):
+            raise InvalidRequestError(
+                "The configured authorization-code repository does not support PKCE."
+            )
 
     def get_authorization_code_challenge(self, authorization_code):
         return getattr(authorization_code, "code_challenge", None)

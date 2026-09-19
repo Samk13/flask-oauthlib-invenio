@@ -127,6 +127,25 @@ class TestWebAuth(OAuthSuite):
         rv = self.client.get("/method/delete")
         assert b"DELETE" in rv.data
 
+    def test_hardened_bearer_transport_requires_header(self):
+        self.app.config["OAUTH2_ALLOW_LEGACY_BEARER_TOKEN_TRANSPORT"] = False
+
+        rv = self.client.get("/api/client?access_token=never_expire")
+        assert rv.status_code == 401
+
+        rv = self.client.get(
+            "/api/client", headers={"Authorization": "Bearer never_expire"}
+        )
+        assert rv.status_code == 200
+
+    def test_hardened_token_endpoint_rejects_get(self):
+        self.app.config["OAUTH2_ALLOW_LEGACY_TOKEN_ENDPOINT_GET"] = False
+        rv = self.client.get(
+            "/oauth/token?grant_type=authorization_code&code=12345",
+            headers={"Authorization": "Basic %s" % auth_code},
+        )
+        assert b"unsupported_grant_type" in rv.data
+
     def test_no_bear_token(self):
         @self.oauth_client.tokengetter
         def get_oauth_token():

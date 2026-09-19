@@ -104,30 +104,28 @@ def bind_cache_grant(app, provider, current_user, config_prefix="OAUTH2"):
     except KeyError as exc:
         raise RuntimeError(
             "bind_cache_grant requires InvenioCache to be initialized on the "
-            "Flask application. Configure CACHE_TYPE/CACHE_REDIS_URL via "
+            "Flask application. Configure CACHE_TYPE and CACHE_REDIS_* via "
             "invenio-cache instead of legacy OAUTH2_CACHE_* settings."
         ) from exc
 
     key_prefix = app.config.get("OAUTH2_GRANT_CACHE_KEY_PREFIX", "oauth2::grant::")
     timeout = app.config.get("OAUTH2_GRANT_CACHE_EXPIRES", 100)
 
+    provider._supports_pkce = True
+
     def _key(client_id, code):
         return "%s%s::%s" % (key_prefix, client_id, code)
 
     def _consume(key):
-        """Atomically consume a key when Redis supports GETDEL.
+        """Consume a grant once through the public Invenio-Cache API.
 
-        Flask-Caching exposes the concrete backend as ``cache.cache``. Redis
-        backends serialize values before storage, so direct GETDEL results must
-        be passed through the backend serializer. Non-Redis backends fall back
-        to get/delete, which is sufficient for development/test backends such as
-        SimpleCache but is not atomic.
+        ``add`` atomically creates a bounded-lifetime consumption marker on
+        distributed backends such as Redis. Keeping the marker until the grant
+        expires makes an interrupted consumer fail closed instead of allowing
+        the authorization code to be replayed.
         """
-        backend = getattr(cache, "cache", None)
-        client = getattr(backend, "_write_client", None)
-        if client is not None and hasattr(client, "getdel"):
-            raw = client.getdel("%s%s" % (backend._get_prefix(), key))
-            return backend.serializer.loads(raw)
+        if not cache.add(f"{key}::consumed", True, timeout=timeout):
+            return None
         value = cache.get(key)
         if value is not None:
             cache.delete(key)
@@ -230,6 +228,10 @@ def bind_sqlalchemy(
     if grant:
         if not current_user:
             raise ValueError(("`current_user` is required" "for Grant Binding"))
+        provider._supports_pkce = all(
+            hasattr(grant, field)
+            for field in ("code_challenge", "code_challenge_method")
+        )
         grant_binding = GrantBinding(grant, session, current_user)
         provider.grantgetter(grant_binding.get)
         provider.grantsetter(grant_binding.set)
@@ -355,7 +357,7 @@ class GrantBinding(BaseBinding):
         :param request: OAuthlib request object
         """
         expires = datetime.now(timezone.utc) + timedelta(seconds=100)
-        grant = self.model(
+        values = dict(
             client_id=request.client.client_id,
             code=code["code"],
             redirect_uri=request.redirect_uri,
@@ -363,6 +365,15 @@ class GrantBinding(BaseBinding):
             user=self.current_user(),
             expires=expires,
         )
+        if all(
+            hasattr(self.model, field)
+            for field in ("code_challenge", "code_challenge_method")
+        ):
+            values.update(
+                code_challenge=code.get("code_challenge"),
+                code_challenge_method=code.get("code_challenge_method"),
+            )
+        grant = self.model(**values)
         self.session.add(grant)
 
         self.session.commit()

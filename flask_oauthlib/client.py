@@ -18,8 +18,9 @@ except ImportError:  # pragma: no cover
 
 from authlib.integrations.base_client import MismatchingStateError, OAuthError
 from authlib.integrations.flask_client import OAuth as AuthlibOAuth
+from authlib.integrations.flask_client.apps import FlaskOAuth2App
 from authlib.oauth1 import SIGNATURE_HMAC_SHA1, ClientAuth
-from flask import current_app, json, redirect, request, session
+from flask import current_app, g, json, redirect, request, session
 from werkzeug.datastructures import MultiDict
 from werkzeug.http import parse_options_header
 from werkzeug.utils import cached_property
@@ -195,6 +196,8 @@ class OAuthRemoteApp(object):
         access_token_method=None,
         access_token_headers=None,
         content_type=None,
+        server_metadata_url=None,
+        parse_id_token=False,
         app_key=None,
         encoding="utf-8",
     ):
@@ -214,6 +217,8 @@ class OAuthRemoteApp(object):
         self._access_token_method = access_token_method
         self._access_token_headers = access_token_headers or {}
         self._content_type = content_type
+        self._server_metadata_url = server_metadata_url
+        self._parse_id_token = parse_id_token
         self._tokengetter = None
         self._authlib_client = None
         self.app_key = app_key
@@ -274,6 +279,14 @@ class OAuthRemoteApp(object):
     def content_type(self):
         return self._get_property("content_type", None)
 
+    @cached_property
+    def server_metadata_url(self):
+        return self._get_property("server_metadata_url", None)
+
+    @cached_property
+    def parse_id_token(self):
+        return self._get_property("parse_id_token", False)
+
     def _get_property(self, key, default=False):
         attr = getattr(self, "_%s" % key)
         if attr is not None:
@@ -308,13 +321,50 @@ class OAuthRemoteApp(object):
 
     def _register_authlib_client(self):
         oauth = self.oauth._authlib
+        remote = self
+
+        class CompatOAuth2App(FlaskOAuth2App):
+            """Authlib app using the compatibility facade's public transport."""
+
+            def fetch_access_token(self, redirect_uri=None, **kwargs):
+                if redirect_uri is not None:
+                    kwargs["redirect_uri"] = redirect_uri
+                token = remote._fetch_oauth2_token(kwargs)
+                if not remote.parse_id_token and "id_token" in token:
+                    token = dict(token)
+                    g.oauthlib_compat_id_token = token.pop("id_token")
+                return token
+
+            def authorize_access_token(self, **kwargs):
+                token = super().authorize_access_token(**kwargs)
+                id_token = g.pop("oauthlib_compat_id_token", None)
+                if id_token is not None:
+                    token["id_token"] = id_token
+                return token
+
+            @staticmethod
+            def prepare_refresh_token_request(
+                url, refresh_token=None, client_id=None, client_secret=None, **kwargs
+            ):
+                body = {
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    **kwargs,
+                }
+                headers = {"Content-Type": "application/x-www-form-urlencoded"}
+                return url, headers, urlencode({k: v for k, v in body.items() if v})
+
         register_kwargs = dict(
+            client_cls=None if self.request_token_url else CompatOAuth2App,
             client_id=self.consumer_key,
             client_secret=self.consumer_secret,
             request_token_url=self.request_token_url,
             access_token_url=self.expand_url(self.access_token_url),
             authorize_url=self.expand_url(self.authorize_url),
             api_base_url=self.base_url,
+            server_metadata_url=self.server_metadata_url,
             request_token_params={
                 k: v
                 for k, v in (self.request_token_params or {}).items()
@@ -569,37 +619,39 @@ class OAuthRemoteApp(object):
             if "oauth_token" not in data:
                 raise OAuthException("Failed to fetch access token", data=data)
             return data
-        if request.args.get("error"):
-            return None
-        client = self.authlib_client
-        state = request.args.get("state")
-        state_data = client.framework.get_state_data(session, state) if state else None
-        if not state_data:
-            # Missing, mismatched and replayed state all fail before any token
-            # request is made.
-            exc = MismatchingStateError()
+        try:
+            return self.authlib_client.authorize_access_token()
+        except MismatchingStateError as exc:
             raise OAuthException(str(exc), type="mismatching_state") from exc
-        client.framework.clear_state_data(session, state)
+        except OAuthError as exc:
+            if request.args.get("error") or getattr(exc, "error", None) in {
+                "access_denied",
+                "missing_code",
+            }:
+                return None
+            raise OAuthException(str(exc), type=getattr(exc, "error", None)) from exc
 
-        token = self.handle_oauth2_response(request.args, state_data=state_data)
-        if token and "id_token" in token and state_data.get("nonce"):
-            token["userinfo"] = client.parse_id_token(token, nonce=state_data["nonce"])
-        client.token = token
-        return token
+    def handle_oauth2_response(self, args):
+        """Validate and handle an OAuth2 callback.
 
-    def handle_oauth2_response(self, args, state_data=None):
-        """Legacy OAuth2 code exchange using the overridable HTTP hook."""
-        code = args.get("code")
-        if not code:
-            return None
+        This legacy public method no longer performs a state-less code exchange.
+        Callback arguments must be those of the active Flask request so Authlib
+        can validate and consume state before invoking the token transport.
+        """
+        if args is not request.args and dict(args) != dict(request.args):
+            raise OAuthException(
+                "OAuth callback arguments do not match the active request",
+                type="mismatching_state",
+            )
+        return self.authorized_response()
+
+    def _fetch_oauth2_token(self, params):
+        """Exchange a validated code using the overridable HTTP hook."""
         remote_args = {
             "grant_type": "authorization_code",
-            "code": code,
             "client_id": self.consumer_key,
             "client_secret": self.consumer_secret,
-            "redirect_uri": (state_data or {}).get("redirect_uri")
-            or session.get("%s_oauthredir" % self.name),
-            "code_verifier": (state_data or {}).get("code_verifier"),
+            **params,
         }
         remote_args.update(self.access_token_params)
         remote_args = {k: v for k, v in remote_args.items() if v is not None}

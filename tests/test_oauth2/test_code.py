@@ -176,6 +176,22 @@ class TestSQLAlchemyProvider(TestDefaultProvider):
     def create_server(self):
         create_server(self.app, sqlalchemy_provider(self.app))
 
+    def test_pkce_fails_closed_without_repository_support(self):
+        verifier = "a" * 43
+        challenge = create_s256_code_challenge(verifier)
+        url = (
+            self.authorize_url
+            + "&scope=email&code_challenge="
+            + challenge
+            + "&code_challenge_method=S256"
+        )
+
+        rv = self.client.get(url)
+
+        assert rv.location.startswith("http://localhost/authorized?")
+        assert "does+not+support+PKCE" in rv.location
+        assert "code=" not in rv.location
+
 
 class TestCacheProvider(TestDefaultProvider):
     def create_server(self):

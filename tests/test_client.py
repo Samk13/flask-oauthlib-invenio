@@ -1,4 +1,10 @@
+from urllib.parse import parse_qs, urlparse
+
 import pytest
+from authlib.oauth1.rfc5849.signature import verify_hmac_sha1, verify_rsa_sha1
+from authlib.oauth1.rfc5849.wrapper import OAuth1Request
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from flask import Flask
 
 from flask_oauthlib.client import (
@@ -18,7 +24,7 @@ except ImportError:
 
     http_urlopen = "urllib.request.urlopen"
 
-from mock import patch
+from mock import MagicMock, patch
 
 
 class Response(object):
@@ -205,18 +211,90 @@ class TestOAuthRemoteApp(object):
 
         assert exc.value.type == "mismatching_state"
 
-    def test_oauth1_rsa_key_is_forwarded(self):
+    def test_oidc_callback_preserves_nonce_validation(self):
+        app = Flask(__name__)
+        app.secret_key = "test"
+        oauth = OAuth(app)
+        remote = oauth.remote_app(
+            "oidc",
+            consumer_key="key",
+            consumer_secret="secret",
+            request_token_url=None,
+            access_token_url="https://provider.example/token",
+            authorize_url="https://provider.example/authorize",
+            request_token_params={"scope": "openid profile"},
+            parse_id_token=True,
+            server_metadata_url="https://provider.example/.well-known/openid-configuration",
+        )
+        remote._fetch_oauth2_token = MagicMock(
+            return_value={"access_token": "token", "id_token": "signed-token"}
+        )
+        remote.authlib_client.load_server_metadata = MagicMock(
+            return_value={
+                "authorization_endpoint": "https://provider.example/authorize",
+                "token_endpoint": "https://provider.example/token",
+            }
+        )
+        remote.authlib_client.parse_id_token = MagicMock(return_value={"sub": "123"})
+
+        @app.route("/login")
+        def login():
+            return remote.authorize("http://localhost/callback")
+
+        @app.route("/callback")
+        def callback():
+            token = remote.authorized_response()
+            assert token["userinfo"] == {"sub": "123"}
+            return "ok"
+
+        with app.test_client() as client:
+            response = client.get("/login")
+            state = parse_qs(urlparse(response.location).query)["state"][0]
+            response = client.get(f"/callback?code=valid&state={state}")
+
+        assert response.status_code == 200
+        kwargs = remote.authlib_client.parse_id_token.call_args.kwargs
+        assert kwargs["nonce"]
+
+    @pytest.mark.parametrize("signature_method", ["HMAC-SHA1", "RSA-SHA1"])
+    def test_oauth1_signatures_are_verifiable(self, signature_method):
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        private_pem = private_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        public_pem = private_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
         oauth = OAuth()
         remote = oauth.remote_app(
             "remote",
             consumer_key="key",
             consumer_secret="secret",
             request_token_url="https://provider.example/request-token",
-            rsa_key="private-key",
-            signature_method="RSA-SHA1",
+            rsa_key=private_pem,
+            signature_method=signature_method,
         )
 
-        assert remote._oauth1_auth().rsa_key == "private-key"
+        uri, headers, body = remote._oauth1_auth().prepare(
+            "POST", "https://provider.example/resource", {}, b"value=1"
+        )
+        signed_request = OAuth1Request("POST", uri, body, headers)
+
+        class Client:
+            def get_client_secret(self):
+                return "secret"
+
+            def get_rsa_public_key(self):
+                return public_pem
+
+        signed_request.client = Client()
+        verifier = (
+            verify_rsa_sha1 if signature_method == "RSA-SHA1" else verify_hmac_sha1
+        )
+        assert verifier(signed_request)
 
     def test_token_types(self):
         oauth = OAuth()

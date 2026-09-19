@@ -1,6 +1,6 @@
 # coding: utf-8
 
-import os
+from concurrent.futures import ThreadPoolExecutor
 
 from flask import Flask
 from invenio_cache import InvenioCache
@@ -60,9 +60,21 @@ def test_simple_cache_grant_is_consumed_once():
 
 
 def test_redis_cache_grant_is_consumed_once():
-    app, provider = create_provider(
-        "RedisCache",
-        CACHE_REDIS_URL=os.environ.get("CACHE_REDIS_URL", "redis://127.0.0.1:6379/0"),
-    )
+    app, provider = create_provider("RedisCache")
     with app.app_context():
         assert_grant_is_consumed(provider)
+
+
+def test_redis_cache_grant_is_consumed_atomically():
+    app, provider = create_provider("RedisCache")
+    with app.app_context():
+        provider.set_grant("client", {"code": "concurrent-code"}, Request())
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(
+            executor.map(
+                lambda _: provider.get_grant("client", "concurrent-code"), range(8)
+            )
+        )
+
+    assert sum(result is not None for result in results) == 1
