@@ -6,6 +6,15 @@ to Authlib. The public ``flask_oauthlib`` imports, remote-app registry,
 ``OAuthRemoteApp`` hooks and provider decorators remain available, but direct
 imports of OAuthlib internals are no longer supported.
 
+Python compatibility
+--------------------
+
+This release requires Python 3.10 or newer. The previous package supported
+Python 3.9, but the migration targets Authlib 1.8, which itself requires
+Python 3.10 or newer. Retaining Python 3.9 in the package metadata or CI matrix
+would therefore advertise an unsupported dependency combination. Applications
+that must remain on Python 3.9 must continue using the pre-Authlib release.
+
 Cache configuration
 -------------------
 
