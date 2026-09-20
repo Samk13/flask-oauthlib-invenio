@@ -20,7 +20,7 @@ else:
 
 # os.environ['DEBUG'] = 'true'
 # for oauthlib 0.6.3
-os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "true"
+os.environ["AUTHLIB_INSECURE_TRANSPORT"] = "true"
 
 
 class BaseSuite(unittest.TestCase):

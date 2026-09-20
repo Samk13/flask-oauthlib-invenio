@@ -198,6 +198,7 @@ class OAuthRemoteApp(object):
         content_type=None,
         server_metadata_url=None,
         parse_id_token=False,
+        client_kwargs=None,
         app_key=None,
         encoding="utf-8",
     ):
@@ -219,6 +220,7 @@ class OAuthRemoteApp(object):
         self._content_type = content_type
         self._server_metadata_url = server_metadata_url
         self._parse_id_token = parse_id_token
+        self._client_kwargs_config = client_kwargs
         self._tokengetter = None
         self._authlib_client = None
         self.app_key = app_key
@@ -287,6 +289,17 @@ class OAuthRemoteApp(object):
     def parse_id_token(self):
         return self._get_property("parse_id_token", False)
 
+    @cached_property
+    def client_kwargs(self):
+        if self._client_kwargs_config is not None:
+            return self._client_kwargs_config
+        if not self.app_key:
+            return {}
+        app = self.oauth.app or current_app
+        if self.app_key in app.config:
+            return app.config[self.app_key].get("client_kwargs", {})
+        return app.config.get(f"{self.app_key}_CLIENT_KWARGS", {})
+
     def _get_property(self, key, default=False):
         attr = getattr(self, "_%s" % key)
         if attr is not None:
@@ -307,7 +320,7 @@ class OAuthRemoteApp(object):
         return app.config[config_key]
 
     def _client_kwargs(self):
-        kwargs = {}
+        kwargs = dict(self.client_kwargs or {})
         params = dict(self.request_token_params or {})
         scope = params.pop("scope", None)
         if scope:

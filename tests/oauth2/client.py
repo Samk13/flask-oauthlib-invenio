@@ -74,7 +74,7 @@ def create_client(app):
 if __name__ == "__main__":
     import os
 
-    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "true"
+    os.environ["AUTHLIB_INSECURE_TRANSPORT"] = "true"
     # DEBUG=1 python oauth2_client.py
     app = Flask(__name__)
     app.debug = True

@@ -2,7 +2,7 @@
 flask_oauthlib.contrib.client
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-An experiment client with requests-oauthlib as backend.
+An experimental compatibility client backed by Authlib.
 """
 
 import contextlib
@@ -161,8 +161,7 @@ class OAuth1Application(BaseApplication):
 
         :param token: a tuple of access token pair ``(token, token_secret)``
                       or a dictionary of access token response.
-        :returns: a :class:`requests_oauthlib.oauth1_session.OAuth1Session`
-                  object.
+        :returns: an Authlib OAuth 1 session object.
         """
         if isinstance(token, dict):
             access_token = token["oauth_token"]
@@ -230,8 +229,7 @@ class OAuth2Application(BaseApplication):
         """Creates a client with specific access token dictionary.
 
         :param token: a dictionary of access token response.
-        :returns: a :class:`requests_oauthlib.oauth2_session.OAuth2Session`
-                  object.
+        :returns: an Authlib OAuth 2 session object.
         """
         return self.make_oauth_session(token=token)
 
@@ -310,23 +308,21 @@ class OAuth2Application(BaseApplication):
 
     @contextlib.contextmanager
     def insecure_transport(self):
-        """Creates a context to enable the oauthlib environment variable in
-        order to debug with insecure transport.
-        """
-        origin = os.environ.get("OAUTHLIB_INSECURE_TRANSPORT")
+        """Temporarily allow Authlib HTTP transport for tests and debugging."""
+        origin = os.environ.get("AUTHLIB_INSECURE_TRANSPORT")
         if current_app.debug or current_app.testing:
             try:
-                os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+                os.environ["AUTHLIB_INSECURE_TRANSPORT"] = "1"
                 yield
             finally:
                 if origin:
-                    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = origin
+                    os.environ["AUTHLIB_INSECURE_TRANSPORT"] = origin
                 else:
-                    os.environ.pop("OAUTHLIB_INSECURE_TRANSPORT", None)
+                    os.environ.pop("AUTHLIB_INSECURE_TRANSPORT", None)
         else:
             if origin:
                 warnings.warn(
-                    "OAUTHLIB_INSECURE_TRANSPORT has been found in os.environ "
+                    "AUTHLIB_INSECURE_TRANSPORT has been found in os.environ "
                     "but the app is not running in debug mode or testing mode."
                     " It may put you in danger of the Man-in-the-middle attack"
                     " while using OAuth 2.",

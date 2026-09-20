@@ -12,7 +12,7 @@ from sqlalchemy.orm import relationship
 from flask_oauthlib.contrib.oauth2 import bind_cache_grant, bind_sqlalchemy
 from flask_oauthlib.provider import OAuth2Provider
 
-os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "true"
+os.environ["AUTHLIB_INSECURE_TRANSPORT"] = "true"
 
 db = SQLAlchemy()
 

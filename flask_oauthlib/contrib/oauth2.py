@@ -11,10 +11,28 @@ contributed by: Randy Topliffe
 import logging
 from datetime import datetime, timedelta, timezone
 
+from invenio_cache import current_cache
+
 __all__ = ("bind_cache_grant", "bind_sqlalchemy")
 
 
 log = logging.getLogger("flask_oauthlib")
+
+
+def _request_redirect_uri(request):
+    payload = getattr(request, "payload", None)
+    return (
+        payload.redirect_uri
+        if payload is not None
+        else getattr(request, "redirect_uri", None)
+    )
+
+
+def _request_scopes(request):
+    payload = getattr(request, "payload", None)
+    if payload is not None:
+        return (payload.scope or "").split()
+    return list(getattr(request, "scopes", None) or [])
 
 
 class Grant(object):
@@ -99,15 +117,7 @@ def bind_cache_grant(app, provider, current_user, config_prefix="OAUTH2"):
     Cachelib configuration. ``config_prefix`` is accepted for backward
     compatibility and intentionally ignored.
     """
-    try:
-        cache = app.extensions["invenio-cache"].cache
-    except KeyError as exc:
-        raise RuntimeError(
-            "bind_cache_grant requires InvenioCache to be initialized on the "
-            "Flask application. Configure CACHE_TYPE and CACHE_REDIS_* via "
-            "invenio-cache instead of legacy OAUTH2_CACHE_* settings."
-        ) from exc
-
+    cache = current_cache
     key_prefix = app.config.get("OAUTH2_GRANT_CACHE_KEY_PREFIX", "oauth2::grant::")
     timeout = app.config.get("OAUTH2_GRANT_CACHE_EXPIRES", 100)
 
@@ -138,8 +148,8 @@ def bind_cache_grant(app, provider, current_user, config_prefix="OAUTH2"):
             cache,
             client_id=client_id,
             code=code["code"],
-            redirect_uri=request.redirect_uri,
-            scopes=request.scopes,
+            redirect_uri=_request_redirect_uri(request),
+            scopes=_request_scopes(request),
             user=current_user(),
             code_challenge=code.get("code_challenge"),
             code_challenge_method=code.get("code_challenge_method"),
@@ -360,8 +370,8 @@ class GrantBinding(BaseBinding):
         values = dict(
             client_id=request.client.client_id,
             code=code["code"],
-            redirect_uri=request.redirect_uri,
-            scope=" ".join(request.scopes),
+            redirect_uri=_request_redirect_uri(request),
+            scope=" ".join(_request_scopes(request)),
             user=self.current_user(),
             expires=expires,
         )

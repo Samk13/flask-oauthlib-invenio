@@ -70,11 +70,11 @@ def test_redis_cache_grant_is_consumed_atomically():
     with app.app_context():
         provider.set_grant("client", {"code": "concurrent-code"}, Request())
 
+    def consume_grant(_):
+        with app.app_context():
+            return provider.get_grant("client", "concurrent-code")
+
     with ThreadPoolExecutor(max_workers=8) as executor:
-        results = list(
-            executor.map(
-                lambda _: provider.get_grant("client", "concurrent-code"), range(8)
-            )
-        )
+        results = list(executor.map(consume_grant, range(8)))
 
     assert sum(result is not None for result in results) == 1

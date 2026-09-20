@@ -46,6 +46,7 @@ class OAuth2Provider(object):
         self._after_request_funcs = []
         self._exception_handler = None
         self._invalid_response = None
+        self._tokenrevoker = None
         self._validator_class = validator_class
         self._server = None
         self._require_oauth = None
@@ -102,22 +103,23 @@ class OAuth2Provider(object):
         if expires is not None:
             config.setdefault("OAUTH2_TOKEN_EXPIRES_IN", {"default": expires})
 
+        default_generator = None
         token_generator = config.get("OAUTH2_PROVIDER_TOKEN_GENERATOR")
         if token_generator:
             if not callable(token_generator):
                 token_generator = import_string(token_generator)
-            self.server.register_token_generator(
-                "default", _legacy_generator(token_generator)
-            )
+            default_generator = _legacy_generator(token_generator)
 
         refresh_generator = config.get("OAUTH2_PROVIDER_REFRESH_TOKEN_GENERATOR")
         if refresh_generator:
             if not callable(refresh_generator):
                 refresh_generator = import_string(refresh_generator)
-            default_generator = self.server._token_generators.get("default")
+            base_generator = (
+                default_generator or self.server.create_bearer_token_generator(config)
+            )
 
             def generate_token(**kwargs):
-                token = default_generator(**kwargs)
+                token = base_generator(**kwargs)
                 if kwargs.get("include_refresh_token"):
                     try:
                         token["refresh_token"] = refresh_generator(
@@ -127,7 +129,10 @@ class OAuth2Provider(object):
                         token["refresh_token"] = refresh_generator()
                 return token
 
-            self.server.register_token_generator("default", generate_token)
+            default_generator = generate_token
+
+        if default_generator:
+            self.server.register_token_generator("default", default_generator)
 
     def _register_grants(self):
         provider = self
@@ -268,7 +273,9 @@ class OAuth2Provider(object):
                 return token
 
             def revoke_token(self, token, req):
-                if hasattr(token, "delete"):
+                if provider._tokenrevoker is not None:
+                    provider._tokenrevoker(token, req)
+                elif hasattr(token, "delete"):
                     token.delete()
 
         self.server.register_endpoint(RevokeTokenEndpoint)
@@ -323,6 +330,11 @@ class OAuth2Provider(object):
 
     def grantsetter(self, f):
         self._grantsetter = f
+        return f
+
+    def tokenrevoker(self, f):
+        """Register the application-owned token revocation callback."""
+        self._tokenrevoker = f
         return f
 
     def authorize_handler(self, f):
